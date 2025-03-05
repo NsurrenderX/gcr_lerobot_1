@@ -48,9 +48,9 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     num_workers: int = 8
     batch_size: int = 2
-    steps: int = 100_000
-    eval_freq: int = 200
-    log_freq: int = 5
+    steps: int = 1000_000
+    eval_freq: int = 2000
+    log_freq: int = 50
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 400
