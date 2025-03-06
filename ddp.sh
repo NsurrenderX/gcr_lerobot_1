@@ -1,17 +1,17 @@
 #!/bin/bash
+export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+export NCCL_IB_DISABLE=0
+export NCCL_SOCKET_IFNAME=en,eth,em,bond,ib #bond0
+export NCCL_DEBUG=INFO
+export NCCL_NVLS_ENABLE=0
 
-# 多机配置
-# MASTER_ADDR=${MASTER_NODE_IP}  # 主节点IP
-NUM_NODES=2
-NUM_PROCESSES_PER_NODE=8
+export CFLAGS="-I/usr/include"
+export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
+export CUTLASS_PATH="/path/to/cutlass"
 
-accelerate launch \
-    --config_file ddp_config.yaml \
-    --num_processes $((NUM_NODES * NUM_PROCESSES_PER_NODE)) \
-    --num_machines $NUM_NODES \
-    lerobot/scripts/ddp_train.py \
-    --policy.type="pi0" \
+deepspeed --hostfile=hostfile.txt lerobot/scripts/ddp_train.py \
     --deepspeed="./ds_zero2.json" \
+    --policy.type="pi0" \
     --dataset.root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/" \
     --dataset.repo_id="whatever" \
     --output_dir="/mnt/wangxiaofa/pi_0_ckpts/0306_first" \
