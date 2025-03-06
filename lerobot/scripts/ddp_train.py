@@ -59,6 +59,7 @@ from lerobot.scripts.eval import eval_policy
 
 class AccelerateLogger:
     def __init__(self, accelerator: Accelerator, cfg):
+        self.rank = cfg.local_rank
         self.accelerator = accelerator
         self.log_file = Path(os.path.join(cfg.log_dir, f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"))
         self.log_file.parent.mkdir(exist_ok=True)
@@ -70,7 +71,7 @@ class AccelerateLogger:
 
     def log(self, message: str, level: str = "INFO"):
         """核心日志方法"""
-        formatted = f"[{os.getpid()}]-[{datetime.now().strftime('%H:%M:%S')}]-[{level}] - {message}"
+        formatted = f"[{os.getpid()}]-[rank: {self.rank}]-[{datetime.now().strftime('%H:%M:%S')}]-[{level}] - {message}"
         
         # 主进程输出到控制台和文件
         if self.accelerator.is_main_process:
