@@ -223,7 +223,7 @@ def train(cfg: TrainPipelineConfig):
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset,
             num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
+            rank=cfg.local_rank,
             shuffle=True,
             seed=cfg.seed
         )
