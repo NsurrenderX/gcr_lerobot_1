@@ -61,7 +61,10 @@ class AccelerateLogger:
     def __init__(self, accelerator: Accelerator, cfg):
         self.rank = cfg.local_rank
         self.accelerator = accelerator
-        self.log_file = Path(os.path.join(cfg.log_dir, f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"))
+        log_path = os.path.join(cfg.log_dir, f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        log_dir = os.path.dirname(log_path)
+        os.makedirs(log_dir, exist_ok=True)
+        self.log_file = Path(log_path)
         self.log_file.parent.mkdir(exist_ok=True)
         
         # 主进程初始化日志文件
@@ -323,6 +326,7 @@ def train(cfg: TrainPipelineConfig):
         if cfg.save_checkpoint and is_saving_step:
             logger.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+            os.makedirs(checkpoint_dir, exist_ok=True)
             accelerator.save_state(checkpoint_dir, safe_serialization=False)
             metadata = {
                         "step": step,
