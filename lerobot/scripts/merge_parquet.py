@@ -39,7 +39,7 @@ pq.write_table(
     table,
     output_file,
     compression="snappy",  # 可选：'gzip', 'brotli', 'zstd'
-    row_group_size=1024 * 1024  # 控制行组大小（默认1MB）
+    row_group_size=50 * 1024 * 1024  # 控制行组大小（默认1MB）
 )
 
 print(f"成功合并 {len(parquet_files)} 个文件 → 输出路径: {output_file}")

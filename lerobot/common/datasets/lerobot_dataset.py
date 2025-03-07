@@ -18,6 +18,7 @@ import logging
 import shutil
 from pathlib import Path
 from typing import Callable
+from datetime import datetime
 
 import datasets
 import numpy as np
@@ -491,7 +492,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.stats = aggregate_stats(episodes_stats)
 
         # Load actual data
-        print("Trying to load dataset...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] - Trying to load dataset...")
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -502,7 +503,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
             
-        print("Dataset loaded successfully.")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] - Dataset loaded successfully.")
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
@@ -511,7 +512,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
         
-        print("Checking timestamps sync status...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] - TChecking timestamps sync status...")
         
         check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
