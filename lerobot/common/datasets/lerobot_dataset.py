@@ -491,6 +491,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.stats = aggregate_stats(episodes_stats)
 
         # Load actual data
+        print("Trying to load dataset...")
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -500,6 +501,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.revision = get_safe_version(self.repo_id, self.revision)
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
+            
+        print("Dataset loaded successfully.")
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
@@ -507,6 +510,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         timestamps = torch.stack(self.hf_dataset["timestamp"]).numpy()
         episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
+        
+        print("Checking timestamps sync status...")
+        
         check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
         # Setup delta_indices
