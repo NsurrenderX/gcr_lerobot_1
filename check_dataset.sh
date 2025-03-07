@@ -9,15 +9,8 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 export CUTLASS_PATH="/path/to/cutlass"
 
-deepspeed --hostfile=hostfile.txt lerobot/scripts/ddp_train.py \
-    --deepspeed="./ds_zero2.json" \
+python lerobot/scripts/look_up_dataset.py \
     --policy.type="pi0" \
-    --dataset.root="/data_16T/lerobot_openx/bridge_orig_lerobot/" \
+    --dataset.root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/" \
     --dataset.repo_id="whatever" \
-    --output_dir="/mnt/wangxiaofa/pi_0_ckpts/0306_first" \
-    --batch_size=4 \
-    --wandb.enable=true \
-    --wandb.project="pi0first" \
-    --job_name="pi0_0306_first" \
-    --save_freq=10000 \
-    --log_dir="/mnt/wangxiaofa/logs"
+    --batch_size=4
