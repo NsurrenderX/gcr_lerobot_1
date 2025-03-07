@@ -12,10 +12,14 @@ output_file = "/data_16T/lerobot_openx/bridge_orig_lerobot/merged.parquet"  # �
 
 # 1️⃣ 递归收集所有Parquet文件路径
 parquet_files = []
-for dir in input_dirs:
-    # 使用 glob 递归匹配所有子目录中的 .parquet 文件
-    files = glob.glob(os.path.join(dir, "**/*.parquet"), recursive=True)
-    parquet_files.extend(files)
+for dir in sorted(input_dirs):
+    subdir_list = sorted(os.listdir(dir))
+    for subdir in subdir_list:
+        subdir_path = os.path.join(dir, subdir)
+        subdir_parquet_list = sorted(os.listdir(subdir_path))
+        for parquet_file in subdir_parquet_list:
+            if parquet_file.endswith(".parquet"):
+                parquet_files.append(os.path.join(subdir_path, parquet_file))
 
 if not parquet_files:
     raise ValueError("未找到任何Parquet文件！请检查输入目录路径")

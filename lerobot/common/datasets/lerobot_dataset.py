@@ -467,6 +467,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 a single option which is the pyav decoder used by Torchvision. Defaults to pyav.
         """
         super().__init__()
+        print("__init__ 方法被调用")
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
@@ -488,6 +489,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.repo_id, self.root, self.revision, force_cache_sync=force_cache_sync
         )
         if self.episodes is not None and self.meta._version >= packaging.version.parse("v2.1"):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] - Loading episodes stats...")
             episodes_stats = [self.meta.episodes_stats[ep_idx] for ep_idx in self.episodes]
             self.stats = aggregate_stats(episodes_stats)
 
@@ -624,7 +626,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is None:
             # path = str(self.root / "data")
             path = str(self.root / "merged.parquet")
-            hf_dataset = load_dataset("parquet", data_dir=path, split="train")
+            hf_dataset = load_dataset("parquet", data_files=path, split="train")
+            # hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
             hf_dataset = load_dataset("parquet", data_files=files, split="train")

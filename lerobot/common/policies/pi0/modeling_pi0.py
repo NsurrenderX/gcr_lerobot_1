@@ -249,7 +249,7 @@ class PI0Policy(PreTrainedPolicy):
         )
 
         self.language_tokenizer = AutoTokenizer.from_pretrained("/data_16T/lerobot_openx/paligemma-3b-pt-224/")
-        self.language_tokenizer = AutoTokenizer.from_pretrained("/mnt/wangxiaofa/RDT_module_params/paligemma-3b-pt-224/")
+        # self.language_tokenizer = AutoTokenizer.from_pretrained("/mnt/wangxiaofa/RDT_module_params/paligemma-3b-pt-224/")
         self.model = PI0FlowMatching(config)
         
         self.dtype = torch.bfloat16
