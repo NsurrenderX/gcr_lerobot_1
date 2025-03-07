@@ -176,6 +176,9 @@ def train(cfg: TrainPipelineConfig):
 
     # Policy setup
     logger.info("Creating policy...")
+    if hasattr(cfg.policy, "tokenizer_max_length"):
+        logger.info("Setiing model's tokenizer_max_length to 60")
+        cfg.policy.tokenizer_max_length=65
     policy = make_policy(
         cfg=cfg.policy,
         device=accelerator.device,
