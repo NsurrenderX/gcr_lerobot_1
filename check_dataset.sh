@@ -12,7 +12,7 @@ export CUTLASS_PATH="/path/to/cutlass"
 export dataset_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/"
 export dataset_root="/data_16T/lerobot_openx/bridge_orig_lerobot/"
 export parquet_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/merged.parquet"
-export parquet_root="/data_16T/lerobot_openx/bridge_orig_lerobot/merged.parquet"
+# export parquet_root="/data_16T/lerobot_openx/bridge_orig_lerobot/merged.parquet"
 # python lerobot/scripts/look_up_dataset.py \
 #     --policy.type="pi0" \
 #     --dataset.root=$dataset_root \
