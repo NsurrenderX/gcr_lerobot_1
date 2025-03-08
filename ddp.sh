@@ -18,6 +18,6 @@ deepspeed --hostfile=hostfile.txt lerobot/scripts/ddp_train.py \
     --batch_size=4 \
     --wandb.enable=true \
     --wandb.project="pi0first" \
-    --job_name="pi0_0308_first" \
+    --job_name="pi0_0308_2nd" \
     --save_freq=10000 \
     --log_dir="/mnt/wangxiaofa/logs"
