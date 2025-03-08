@@ -505,7 +505,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.download_episodes(download_videos)
             self.hf_dataset = self.load_hf_dataset()
             
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] - Dataset loaded successfully.")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] - Dataset loaded successfully, loading timestamps.")
 
         self.episode_data_index = get_episode_data_index(self.meta.episodes, self.episodes)
 
@@ -514,7 +514,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episode_indices = torch.stack(self.hf_dataset["episode_index"]).numpy()
         ep_data_index_np = {k: t.numpy() for k, t in self.episode_data_index.items()}
         
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] - TChecking timestamps sync status...")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] - Checking timestamps sync status...")
         
         check_timestamps_sync(timestamps, episode_indices, ep_data_index_np, self.fps, self.tolerance_s)
 
@@ -627,6 +627,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # path = str(self.root / "data")
             path = str(self.root / "merged.parquet")
             hf_dataset = load_dataset("parquet", data_files=path, split="train")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] - Dataset length is {len(hf_dataset)}")
             # hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
