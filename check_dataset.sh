@@ -10,13 +10,13 @@ export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 export CUTLASS_PATH="/path/to/cutlass"
 
 export dataset_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/"
-export dataset_root="/data_16T/lerobot_openx/bridge_orig_lerobot/"
+# export dataset_root="/data_16T/lerobot_openx/bridge_orig_lerobot/"
 export parquet_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/merged.parquet"
 # export parquet_root="/data_16T/lerobot_openx/bridge_orig_lerobot/merged.parquet"
-# python lerobot/scripts/look_up_dataset.py \
-#     --policy.type="pi0" \
-#     --dataset.root=$dataset_root \
-#     --dataset.repo_id="whatever" \
-#     --batch_size=4
-python lerobot/scripts/test_dataset_convert.py \
-    --parquet_root=$parquet_root
+python lerobot/scripts/look_up_dataset.py \
+    --policy.type="pi0" \
+    --dataset.root=$dataset_root \
+    --dataset.repo_id="whatever" \
+    --batch_size=4
+# python lerobot/scripts/test_dataset_convert.py \
+#     --parquet_root=$parquet_root

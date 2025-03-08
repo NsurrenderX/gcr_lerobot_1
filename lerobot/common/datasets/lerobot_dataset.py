@@ -16,6 +16,7 @@
 import contextlib
 import logging
 import shutil
+import polars as pl
 from pathlib import Path
 from typing import Callable
 from datetime import datetime
@@ -26,7 +27,7 @@ import packaging.version
 import PIL.Image
 import torch
 import torch.utils
-from datasets import concatenate_datasets, load_dataset
+from datasets import concatenate_datasets, load_dataset, Dataset
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
@@ -76,6 +77,16 @@ from lerobot.common.robot_devices.robots.utils import Robot
 
 CODEBASE_VERSION = "v2.1"
 
+def parquet_to_dataset(parquet_file: str, split: str = "train") -> datasets.Dataset:
+    """Converts a parquet file to a Hugging Face dataset."""
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Start reading parquet file: {parquet_file}")
+    parquet_pl = pl.read_parquet(parquet_file)
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Start converting parquet to list")
+    parquet_list = parquet_pl.to_dicts()
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Start creating dataset")
+    dataset = Dataset.from_list(parquet_list, split=split)
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Dataset created successfully.")
+    return dataset
 
 class LeRobotDatasetMetadata:
     def __init__(
@@ -626,7 +637,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.episodes is None:
             # path = str(self.root / "data")
             path = str(self.root / "merged.parquet")
-            hf_dataset = load_dataset("parquet", data_files=path, split="train")
+            hf_dataset = parquet_to_dataset(parquet_file=path, split="train")
+            # hf_dataset = load_dataset("parquet", data_files=path, split="train")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] - Dataset length is {len(hf_dataset)}")
             # hf_dataset = load_dataset("parquet", data_dir=path, split="train")
         else:
