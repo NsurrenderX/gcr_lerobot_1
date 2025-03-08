@@ -338,9 +338,9 @@ def train(cfg: TrainPipelineConfig):
                         }
             if accelerator.is_main_process:
                 torch.save(metadata, checkpoint_dir / "metadata.pt")
+                update_last_checkpoint(checkpoint_dir)
             # save_checkpoint(checkpoint_dir, step, cfg, accelerator.unwrap_model(policy), 
             #               optimizer.optimizer, lr_scheduler.scheduler)
-            update_last_checkpoint(checkpoint_dir)
             # if wandb_logger:
             #     wandb_logger.log_policy(checkpoint_dir)
         
