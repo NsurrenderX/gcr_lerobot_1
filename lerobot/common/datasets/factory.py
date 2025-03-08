@@ -15,6 +15,7 @@
 # limitations under the License.
 import logging
 from pprint import pformat
+from datetime import datetime
 
 import torch
 
@@ -83,10 +84,13 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     )
 
     if isinstance(cfg.dataset.repo_id, str):
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Loading dataset metadata for the first time.")
         ds_meta = LeRobotDatasetMetadata(
             cfg.dataset.repo_id, root=cfg.dataset.root, revision=cfg.dataset.revision
         )
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Dataset metadata loaded, starting resolve timestamps.")
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Timestamps resolved, starting create dataset.")
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             root=cfg.dataset.root,
