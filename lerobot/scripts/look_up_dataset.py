@@ -24,6 +24,10 @@ from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
 
+import deepspeed
+from accelerate import Accelerator, DeepSpeedPlugin
+from accelerate.utils import DistributedDataParallelKwargs
+
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
@@ -109,6 +113,16 @@ def update_policy(
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     logging.info(pformat(cfg.to_dict()))
+    
+    ddp_kwargs = DistributedDataParallelKwargs(
+        find_unused_parameters=True,
+        static_graph=False
+    )
+    accelerator = Accelerator(
+            deepspeed_plugin=DeepSpeedPlugin(
+                    hf_ds_config=cfg.deepspeed,
+            ),
+        )
 
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
@@ -187,6 +201,10 @@ def train(cfg: TrainPipelineConfig):
         drop_last=False,
     )
     dl_iter = cycle(dataloader)
+    
+    policy, optimizer, lr_scheduler, dataloader = accelerator.prepare(
+        policy, optimizer, lr_scheduler, dataloader
+    )
 
     policy.train()
 
@@ -218,8 +236,10 @@ def train(cfg: TrainPipelineConfig):
                 print(f"example {key} 0:", batch[key][0])
             else:
                 print(key, type(batch[key]))
+        ds_engine = accelerator.unwrap_model(policy)
+        print(type(ds_engine))
         break
-
+        
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device, non_blocking=True)
