@@ -22,6 +22,7 @@ from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
+import deepspeed
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedDataParallelKwargs
 
@@ -197,11 +198,16 @@ def train(cfg: TrainPipelineConfig):
     # Resume training state
     step = 0
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(
-            cfg.checkpoint_path, optimizer, lr_scheduler, accelerator
+        policy, optimizer, _, lr_scheduler = deepspeed.initialize(
+            model=policy,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            config=cfg.deepspeed,
+            model_parameters=policy.parameters(),
+            resume_from_checkpoint=cfg.checkpoint_path
         )
-        
-        accelerator.load_state_dict(torch.load(cfg.checkpoint_path / "accelerator_state.pt"))
+        metadata = torch.load(cfg.checkpoint_path / "metadata.pt")
+        step = int(metadata["step"])
 
     # Logging setup (main process only)
     if accelerator.is_main_process:
@@ -327,16 +333,20 @@ def train(cfg: TrainPipelineConfig):
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
         
         if cfg.save_checkpoint and is_saving_step:
+            accelerator.wait_for_everyone()
             logger.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             os.makedirs(checkpoint_dir, exist_ok=True)
-            accelerator.save_state(checkpoint_dir, safe_serialization=False)
+            ds_engine = accelerator.deepspeed_engine
+            # accelerator.save_state(checkpoint_dir, safe_serialization=False)
             metadata = {
                         "step": step,
                         "config": cfg.to_dict(),
-                        "timestamp": time.time()
+                        "timestamp": time.time(),
+                        "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
                         }
             if accelerator.is_main_process:
+                ds_engine.save_checkpoint(checkpoint_dir, client_state=metadata)
                 torch.save(metadata, checkpoint_dir / "metadata.pt")
                 update_last_checkpoint(checkpoint_dir)
             # save_checkpoint(checkpoint_dir, step, cfg, accelerator.unwrap_model(policy), 
