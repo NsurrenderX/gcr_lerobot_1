@@ -306,7 +306,9 @@ def train(cfg: TrainPipelineConfig):
                 print(key, type(batch[key]))
         break
         
-
+    # Destroy process group
+    # deepspeed.destroy_process_group()
+    dist.destroy_process_group()
 
 if __name__ == "__main__":
     train()
