@@ -2,6 +2,7 @@
     "bf16": {
         "enabled": true
     },
+    "train_micro_batch_size_per_gpu": 2,
     "zero_optimization": {
         "stage": 2,
         "overlap_comm": true,
