@@ -14,5 +14,5 @@ deepspeed --hostfile=hostfile.txt lerobot/scripts/check_rank.py \
     --policy.type="pi0" \
     --dataset.root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/" \
     --dataset.repo_id="whatever" \
-    --output_dir="/mnt/wangxiaofa/pi_0_ckpts/0308_first_bridge" \
+    --output_dir="/mnt/wangxiaofa/pi_0_ckpts/rrrrrr" \
     --batch_size=4
