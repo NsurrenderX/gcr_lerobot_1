@@ -9,10 +9,14 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 export CUTLASS_PATH="/path/to/cutlass"
 
+export dataset_root="/data_16T/lerobot_openx/bridge_orig_lerobot/"
+export dataset_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/"
+
 deepspeed --hostfile=hostfile.txt lerobot/scripts/check_rank.py \
     --deepspeed="./ds_zero2.json" \
     --policy.type="pi0" \
-    --dataset.root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/" \
+    --dataset.root=$dataset_root \
     --dataset.repo_id="whatever" \
-    --output_dir="/mnt/wangxiaofa/pi_0_ckpts/rrrrrr" \
-    --batch_size=4
+    --log_dir="/mnt/wangxiaofa/logs"
+    # --output_dir="/mnt/wangxiaofa/pi_0_ckpts/rrrrrr" \
+    # --batch_size=4
