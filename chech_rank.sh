@@ -12,7 +12,8 @@ export CUTLASS_PATH="/path/to/cutlass"
 # export dataset_root="/data_16T/lerobot_openx/bridge_orig_lerobot/"
 export dataset_root="/mnt/wangxiaofa/robot_dataset/lerobot-format/bridge_orig_lerobot/"
 
-mpirun $$SINGULARITY_MPI_ENV lerobot/scripts/check_rank.py \
+mpirun $$SINGULARITY_MPI_ENV \
+    python lerobot/scripts/check_rank.py \
     --deepspeed="./ds_zero2.json" \
     --policy.type="pi0" \
     --dataset.root=$dataset_root \
