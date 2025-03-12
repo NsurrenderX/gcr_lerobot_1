@@ -295,6 +295,15 @@ def train(cfg: TrainPipelineConfig):
         
         print(f"rank: {rank}, local_rank: {local_rank}, node_rank: {node_rank}, world_size: {world_size}, maddr: {maddr}, mport: {mport}")
         
+        for key in batch:
+            
+            if isinstance(batch[key], torch.Tensor):
+                print(key, batch[key].shape)
+            elif isinstance(batch[key], list):
+                print(key, len(batch[key]))
+                print(f"example {key} 0:", batch[key][0])
+            else:
+                print(key, type(batch[key]))
         break
         
 
