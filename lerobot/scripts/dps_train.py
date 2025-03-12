@@ -23,13 +23,15 @@ from pprint import pformat
 from typing import Any
 
 import deepspeed
-from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import DistributedDataParallelKwargs
+from deepspeed.utils import get_local_rank, get_global_rank
+from deepspeed.runtime.engine import DeepSpeedEngine
+from deepspeed import get_accelerator
 
 import torch
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+from torch.utils.data.distributed import DistributedSampler
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler, DistEpisodeAwareSampler
@@ -58,108 +60,54 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
-class AccelerateLogger:
-    def __init__(self, accelerator: Accelerator, cfg):
-        self.rank = cfg.local_rank
-        self.accelerator = accelerator
-        log_path = os.path.join(cfg.log_dir, f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-        log_dir = os.path.dirname(log_path)
-        os.makedirs(log_dir, exist_ok=True)
-        self.log_file = Path(log_path)
-        self.log_file.parent.mkdir(exist_ok=True)
-        
-        # 主进程初始化日志文件
-        if self.accelerator.is_main_process:
-            with open(self.log_file, 'w') as f:
-                f.write(f"Training Log - Start at {datetime.now()}\n")
-
-    def log(self, message: str, level: str = "INFO"):
-        """核心日志方法"""
-        formatted = f"[{os.getpid()}]-[rank: {self.rank}]-[{datetime.now().strftime('%H:%M:%S')}]-[{level}] - {message}"
-        
-        # 主进程输出到控制台和文件
-        if self.accelerator.is_main_process:
-            print(formatted)
-            with open(self.log_file, 'a') as f:
-                f.write(formatted + "\n")
-        else:
-            # 其他进程仅打印
-            self.accelerator.print(formatted)
-
-    def critical(self, message: str):
-        self.log(message, "CRITICAL")
-        self.accelerator.fatal_error()
-
-    def error(self, message: str):
-        self.log(message, "ERROR")
-
-    def warning(self, message: str):
-        self.log(message, "WARNING")
-
-    def info(self, message: str):
-        self.log(message, "INFO")
-
-    def debug(self, message: str):
-        self.log(message, "DEBUG")
-        
-def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
-    # 加载accelerate状态
-    accelerator.load_state(checkpoint_path)
+def init_logger(cfg):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     
-    # 加载额外元数据
-    metadata = torch.load(checkpoint_path / "metadata.pt")
-    step = metadata["step"]
+    if cfg.local_rank == 0:
+        formatter = logging.Formatter(
+            f'[%(asctime)s] [rank: {cfg.local_rank}] [%(levelname)s] - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # 控制台Handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+        # 文件Handler
+        log_path = Path(cfg.log_dir) / f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
     
-    # 恢复优化器和学习率调度器状态
-    if optimizer is not None:
-        optimizer.load_state_dict(accelerator.get_optimizer_state(optimizer))
-    if lr_scheduler is not None:
-        lr_scheduler.load_state_dict(accelerator.get_scheduler_state(lr_scheduler))
-    
-    return step, optimizer, lr_scheduler
+    return logger
 
 def update_policy(
-    accelerator: Accelerator,
+    model_engine,
     policy: PreTrainedPolicy,
     batch: Any,
-    grad_clip_norm: float,
 ) -> tuple[MetricsTracker, dict]:
     
     policy.train()
-    with accelerator.autocast():
+    with torch.amp.autocast(device_type="cuda", enabled=model_engine.fp16_enabled()):
         loss, output_dict = policy.forward(batch)
 
-    accelerator.backward(loss)
-    
-    grad_norm = None
-    
-    if accelerator.sync_gradients:
-        grad_norm = accelerator.clip_grad_norm_(
-            policy.parameters(),
-            grad_clip_norm,
-        )
-    return loss, output_dict, grad_norm
+    model_engine.backward(loss)
+    model_engine.step()
+    return loss, output_dict
 
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     
-    # Initialize Accelerator
-    ddp_kwargs = DistributedDataParallelKwargs(
-        find_unused_parameters=True,
-        static_graph=False
-    )
-    deepspeed_plugin = DeepSpeedPlugin(hf_ds_config=cfg.deepspeed)
-    accelerator = Accelerator(
-            deepspeed_plugin=DeepSpeedPlugin(
-                    hf_ds_config=cfg.deepspeed,
-            ),
-        )
+    # Initialize DeepSpeed
+    deepspeed.init_distributed()
+    logger = DeepSpeedLogger(cfg)
     
-    logger = AccelerateLogger(accelerator, cfg)
-    
-    if accelerator.is_main_process:
+    if int(os.environ.get('RANK', 0)) == 0:
         logger.info(pformat(cfg.to_dict()))
         if cfg.wandb.enable and cfg.wandb.project:
             wandb_logger = WandBLogger(cfg)
@@ -170,52 +118,55 @@ def train(cfg: TrainPipelineConfig):
         wandb_logger = None
 
     if cfg.seed is not None:
-        set_seed(cfg.seed + accelerator.process_index)  # Add process index for deterministic seeding
+        set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
 
-    # Dataset and policy setup
+    # Dataset setup
     dataset = make_dataset(cfg)
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
     logger.info("Creating policy...")
     if hasattr(cfg.policy, "tokenizer_max_length"):
-        logger.info("Setiing model's tokenizer_max_length to 60")
+        logger.info("Setting model's tokenizer_max_length to 60")
         cfg.policy.tokenizer_max_length=65
     policy = make_policy(
         cfg=cfg.policy,
-        device=accelerator.device,
+        device=torch.cuda.current_device(),
         ds_meta=dataset.meta,
     )
 
     # Environment setup (only in main process)
     eval_env = None
-    if accelerator.is_main_process and cfg.eval_freq > 0 and cfg.env is not None:
+    if int(os.environ.get('RANK', 0)) == 0 and cfg.eval_freq > 0 and cfg.env is not None:
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
     # Optimizer and scheduler
     logger.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
+    # DeepSpeed initialization
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+        model=policy,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        config=cfg.deepspeed,
+        model_parameters=policy.parameters(),
+    )
+
     # Resume training state
     step = 0
     if cfg.resume:
-        accelerator.load_state(cfg.checkpoint_path)
-        if accelerator.is_main_process:
-            metadata = torch.load(cfg.checkpoint_path / "metadata.pt")
-            step = int(metadata["step"])
-            # 广播step到所有进程
-            step_tensor = torch.tensor([step], device=accelerator.device)
-            torch.distributed.broadcast(step_tensor, src=0)
-            step = step_tensor.item()
-        else:
-            # 非主进程接收step值
-            step_tensor = torch.tensor([0], device=accelerator.device)
-            torch.distributed.broadcast(step_tensor, src=0)
-            step = step_tensor.item()
-        
+        load_path, client_state = model_engine.load_checkpoint(
+            cfg.checkpoint_path,
+            load_optimizer_states=True,
+            load_lr_scheduler_states=True
+        )
+        if load_path is not None:
+            step = client_state['step']
+            logger.info(f"Resumed training from step {step}")
 
     # Logging setup (main process only)
-    if accelerator.is_main_process:
+    if int(os.environ.get('RANK', 0)) == 0:
         num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
         num_total_params = sum(p.numel() for p in policy.parameters())
         logger.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
@@ -233,18 +184,17 @@ def train(cfg: TrainPipelineConfig):
             dataset.episode_data_index,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index
+            num_replicas=int(os.environ.get('WORLD_SIZE', 1)),
+            rank=int(os.environ.get('RANK', 0))
         )
     else:
-        sampler = torch.utils.data.distributed.DistributedSampler(
+        sampler = DistributedSampler(
             dataset,
-            num_replicas=accelerator.num_processes,
-            rank=cfg.local_rank,
+            num_replicas=int(os.environ.get('WORLD_SIZE', 1)),
+            rank=int(os.environ.get('RANK', 0)),
             shuffle=True,
             seed=cfg.seed
         )
-        shuffle = False
 
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -253,10 +203,6 @@ def train(cfg: TrainPipelineConfig):
         num_workers=cfg.num_workers,
         pin_memory=True,
         drop_last=False,
-    )
-    # Prepare components with Accelerator
-    policy, optimizer, lr_scheduler, dataloader = accelerator.prepare(
-        policy, optimizer, lr_scheduler, dataloader
     )
     dl_iter = cycle(dataloader)
 
@@ -270,7 +216,7 @@ def train(cfg: TrainPipelineConfig):
         "optim_s": AverageMeter("optim_s", ":.3f"),
     }
     train_tracker = MetricsTracker(
-        cfg.batch_size * accelerator.num_processes * cfg.gradient_accumulation_steps,  # Total batch size across all processes
+        cfg.batch_size * int(os.environ.get('WORLD_SIZE', 1)) * cfg.gradient_accumulation_steps,
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -278,54 +224,38 @@ def train(cfg: TrainPipelineConfig):
     )
 
     # Main training loop
-    accelerator.wait_for_everyone()
-    logger.info(f"Start training on {accelerator.num_processes} devices")
+    logger.info(f"Start training on {int(os.environ.get('WORLD_SIZE', 1))} devices")
     total_steps = cfg.steps * cfg.gradient_accumulation_steps
     completed_steps = step * cfg.gradient_accumulation_steps
-    for _ in range(completed_steps, total_steps):
+    
+    while completed_steps < total_steps:
         dataloading_s = 0
         start_time = time.perf_counter()
         batch = next(dl_iter)
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
         
-        fwd_bwd = 0
         fwd_bwd_start = time.perf_counter()
         loss, output_dict, grad_norm = update_policy(
-            accelerator,
-            policy,
+            model_engine,
+            model_engine.module,
             batch,
             cfg.optimizer.grad_clip_norm,
         )
         fwd_bwd_time = time.perf_counter() - fwd_bwd_start
-        fwd_bwd += fwd_bwd_time
         
-        if accelerator.sync_gradients:
+        if model_engine.is_gradient_accumulation_boundary():
             train_tracker.dataloading_s = dataloading_s
-            train_tracker.update_s = fwd_bwd
-            
-            fwd_bwd = 0
-            dataloading_s = 0
-            
-            opt_step_start = time.perf_counter()
-            optimizer.step()
-            optimizer.zero_grad()
+            train_tracker.update_s = fwd_bwd_time
             
             if lr_scheduler is not None:
                 lr_scheduler.step()
             
-            opt_step_time = time.perf_counter() - opt_step_start
-            train_tracker.optim_s = opt_step_time
-            
             step += 1
 
-            if has_method(policy, "update"):
-                policy.update()
-                
-            loss_value = accelerator.gather(loss).mean().item()
-            grad_norm_value = accelerator.gather(grad_norm).mean().item() if grad_norm is not None else 0.0
+            loss_value = loss.detach().mean().item()
+            grad_norm_value = grad_norm.item() if grad_norm is not None else 0.0
             
-            # update metrics
             train_tracker.loss = loss_value
             train_tracker.grad_norm = grad_norm_value
             train_tracker.lr = optimizer.param_groups[0]["lr"]
@@ -337,41 +267,25 @@ def train(cfg: TrainPipelineConfig):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
         
-        if cfg.save_checkpoint and is_saving_step:
-            accelerator.wait_for_everyone()
+        if cfg.save_checkpoint and is_saving_step and model_engine.local_rank == 0:
             logger.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             os.makedirs(checkpoint_dir, exist_ok=True)
-            ds_engine = accelerator.deepspeed_engine
-            # accelerator.save_state(checkpoint_dir, safe_serialization=False)
-            metadata = {
-                        "step": step,
-                        "config": cfg.to_dict(),
-                        "timestamp": time.time(),
-                        "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
-                        }
-            if accelerator.is_main_process:
-                ds_engine.save_checkpoint(
-                                        save_dir=checkpoint_dir,
-                                        client_state={
-                                            "step": step,
-                                            "config": cfg.to_dict(),
-                                            "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler else None
-                                        },
-                                        tag=f"step_{step}"
-                                        )
-                torch.save(metadata, checkpoint_dir / "metadata.pt")
-                update_last_checkpoint(checkpoint_dir)
-            # save_checkpoint(checkpoint_dir, step, cfg, accelerator.unwrap_model(policy), 
-            #               optimizer.optimizer, lr_scheduler.scheduler)
-            # if wandb_logger:
-            #     wandb_logger.log_policy(checkpoint_dir)
+            
+            client_state = {
+                "step": step,
+                "config": cfg.to_dict(),
+                "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None
+            }
+            model_engine.save_checkpoint(
+                save_dir=checkpoint_dir,
+                client_state=client_state,
+                tag=f"step_{step}"
+            )
+            torch.save(client_state, os.path.join(checkpoint_dir, "metadata.pt"))
+            update_last_checkpoint(checkpoint_dir)
         
-        
-        accelerator.wait_for_everyone()
-        # Logging and checkpointing (main process only)
-        if accelerator.is_main_process:
-
+        if int(os.environ.get('RANK', 0)) == 0:
             if is_log_step:
                 logger.info(train_tracker)
                 if wandb_logger:
@@ -381,17 +295,17 @@ def train(cfg: TrainPipelineConfig):
                     wandb_logger.log_dict(wandb_log_dict, step)
                 train_tracker.reset_averages()
 
-            if cfg.env and is_eval_step:
+            if cfg.env and is_eval_step and model_engine.local_rank == 0:
                 step_id = get_step_identifier(step, cfg.steps)
                 logger.info(f"Eval policy at step {step}")
                 with torch.no_grad():
                     eval_info = eval_policy(
                         eval_env,
-                        accelerator.unwrap_model(policy),
+                        model_engine.module,
                         cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                         max_episodes_rendered=4,
-                        start_seed=cfg.seed + accelerator.process_index,
+                        start_seed=cfg.seed + int(os.environ.get('RANK', 0)),
                     )
 
                 eval_metrics = {
@@ -400,7 +314,7 @@ def train(cfg: TrainPipelineConfig):
                     "eval_s": AverageMeter("eval_s", ":.3f"),
                 }
                 eval_tracker = MetricsTracker(
-                    cfg.batch_size * accelerator.num_processes,
+                    cfg.batch_size * int(os.environ.get('WORLD_SIZE', 1)),
                     dataset.num_frames,
                     dataset.num_episodes,
                     eval_metrics,
@@ -414,15 +328,12 @@ def train(cfg: TrainPipelineConfig):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
-        accelerator.wait_for_everyone()
+
     # Cleanup
-    if accelerator.is_main_process and eval_env:
+    if int(os.environ.get('RANK', 0)) == 0 and eval_env:
         eval_env.close()
-    accelerator.wait_for_everyone()
-    accelerator.end_training()
     logger.info("Training finished")
 
 
 if __name__ == "__main__":
-    os.environ['WANDB_API_KEY'] = '7f1c1acfe477063902c617b0e8ef24d2b76ed447'
     train()

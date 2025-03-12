@@ -288,141 +288,15 @@ def train(cfg: TrainPipelineConfig):
         batch = next(dl_iter)
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
-        
-        fwd_bwd = 0
-        fwd_bwd_start = time.perf_counter()
-        loss, output_dict, grad_norm = update_policy(
-            accelerator,
-            policy,
-            batch,
-            cfg.optimizer.grad_clip_norm,
-        )
-        fwd_bwd_time = time.perf_counter() - fwd_bwd_start
-        fwd_bwd += fwd_bwd_time
-        
-        if accelerator.sync_gradients:
-            train_tracker.dataloading_s = dataloading_s
-            train_tracker.update_s = fwd_bwd
-            
-            fwd_bwd = 0
-            dataloading_s = 0
-            
-            opt_step_start = time.perf_counter()
-            optimizer.step()
-            optimizer.zero_grad()
-            
-            if lr_scheduler is not None:
-                lr_scheduler.step()
-            
-            opt_step_time = time.perf_counter() - opt_step_start
-            train_tracker.optim_s = opt_step_time
-            
-            step += 1
 
-            if has_method(policy, "update"):
-                policy.update()
-                
-            loss_value = accelerator.gather(loss).mean().item()
-            grad_norm_value = accelerator.gather(grad_norm).mean().item() if grad_norm is not None else 0.0
-            
-            # update metrics
-            train_tracker.loss = loss_value
-            train_tracker.grad_norm = grad_norm_value
-            train_tracker.lr = optimizer.param_groups[0]["lr"]
-            train_tracker.step()
-            
-        completed_steps += 1
+        print(os.environ.get('RANK'))
+        print(os.environ.get('LOCAL_RANK'))
+        print(os.environ.get('WORLD_SIZE'))
+        print(os.environ.get('MASTER_ADDR'))
         
-        is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
-        is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
+        break
         
-        if cfg.save_checkpoint and is_saving_step:
-            accelerator.wait_for_everyone()
-            logger.info(f"Checkpoint policy after step {step}")
-            checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            ds_engine = accelerator.deepspeed_engine
-            # accelerator.save_state(checkpoint_dir, safe_serialization=False)
-            metadata = {
-                        "step": step,
-                        "config": cfg.to_dict(),
-                        "timestamp": time.time(),
-                        "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
-                        }
-            if accelerator.is_main_process:
-                ds_engine.save_checkpoint(
-                                        save_dir=checkpoint_dir,
-                                        client_state={
-                                            "step": step,
-                                            "config": cfg.to_dict(),
-                                            "lr_scheduler": lr_scheduler.state_dict() if lr_scheduler else None
-                                        },
-                                        tag=f"step_{step}"
-                                        )
-                torch.save(metadata, checkpoint_dir / "metadata.pt")
-                update_last_checkpoint(checkpoint_dir)
-            # save_checkpoint(checkpoint_dir, step, cfg, accelerator.unwrap_model(policy), 
-            #               optimizer.optimizer, lr_scheduler.scheduler)
-            # if wandb_logger:
-            #     wandb_logger.log_policy(checkpoint_dir)
-        
-        
-        accelerator.wait_for_everyone()
-        # Logging and checkpointing (main process only)
-        if accelerator.is_main_process:
-
-            if is_log_step:
-                logger.info(train_tracker)
-                if wandb_logger:
-                    wandb_log_dict = train_tracker.to_dict()
-                    if output_dict:
-                        wandb_log_dict.update(output_dict)
-                    wandb_logger.log_dict(wandb_log_dict, step)
-                train_tracker.reset_averages()
-
-            if cfg.env and is_eval_step:
-                step_id = get_step_identifier(step, cfg.steps)
-                logger.info(f"Eval policy at step {step}")
-                with torch.no_grad():
-                    eval_info = eval_policy(
-                        eval_env,
-                        accelerator.unwrap_model(policy),
-                        cfg.eval.n_episodes,
-                        videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
-                        start_seed=cfg.seed + accelerator.process_index,
-                    )
-
-                eval_metrics = {
-                    "avg_sum_reward": AverageMeter("∑rwrd", ":.3f"),
-                    "pc_success": AverageMeter("success", ":.1f"),
-                    "eval_s": AverageMeter("eval_s", ":.3f"),
-                }
-                eval_tracker = MetricsTracker(
-                    cfg.batch_size * accelerator.num_processes,
-                    dataset.num_frames,
-                    dataset.num_episodes,
-                    eval_metrics,
-                    initial_step=step
-                )
-                eval_tracker.eval_s = eval_info["aggregated"].pop("eval_s")
-                eval_tracker.avg_sum_reward = eval_info["aggregated"].pop("avg_sum_reward")
-                eval_tracker.pc_success = eval_info["aggregated"].pop("pc_success")
-                logger.info(eval_tracker)
-                if wandb_logger:
-                    wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
-                    wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
-        accelerator.wait_for_everyone()
-    # Cleanup
-    if accelerator.is_main_process and eval_env:
-        eval_env.close()
-    accelerator.wait_for_everyone()
-    accelerator.end_training()
-    logger.info("Training finished")
 
 
 if __name__ == "__main__":
-    os.environ['WANDB_API_KEY'] = '7f1c1acfe477063902c617b0e8ef24d2b76ed447'
     train()
