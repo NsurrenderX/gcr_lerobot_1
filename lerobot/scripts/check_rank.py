@@ -23,8 +23,6 @@ from pprint import pformat
 from typing import Any
 
 import deepspeed
-from accelerate import Accelerator, DeepSpeedPlugin
-from accelerate.utils import DistributedDataParallelKwargs
 
 import torch
 from torch import distributed as dist
@@ -99,38 +97,10 @@ def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
     
     return step, optimizer, lr_scheduler
 
-def update_policy(
-    accelerator: Accelerator,
-    policy: PreTrainedPolicy,
-    batch: Any,
-    grad_clip_norm: float,
-) -> tuple[MetricsTracker, dict]:
-    
-    policy.train()
-    with accelerator.autocast():
-        loss, output_dict = policy.forward(batch)
-
-    accelerator.backward(loss)
-    
-    grad_norm = None
-    
-    if accelerator.sync_gradients:
-        grad_norm = accelerator.clip_grad_norm_(
-            policy.parameters(),
-            grad_clip_norm,
-        )
-    return loss, output_dict, grad_norm
-
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
-    
-    # Initialize Accelerator
-    ddp_kwargs = DistributedDataParallelKwargs(
-        find_unused_parameters=True,
-        static_graph=False
-    )
     
     deepspeed.init_distributed(auto_mpi_discovery=True)
     
