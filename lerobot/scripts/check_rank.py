@@ -275,7 +275,8 @@ def train(cfg: TrainPipelineConfig):
 
     # Main training loop
     dist.barrier()
-    logger.info(f"Start training on {int(os.environ["WORLD_SIZE"])} devices")
+    world_size = int(os.environ["WORLD_SIZE"])
+    logger.info(f"Start training on {world_size} devices")
     total_steps = cfg.steps * cfg.gradient_accumulation_steps
     completed_steps = step * cfg.gradient_accumulation_steps
     for _ in range(completed_steps, total_steps):
