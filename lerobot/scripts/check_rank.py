@@ -27,6 +27,7 @@ from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedDataParallelKwargs
 
 import torch
+from torch import distributed as dist
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
@@ -58,49 +59,29 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
 
-class AccelerateLogger:
-    def __init__(self, accelerator: Accelerator, cfg):
-        self.rank = cfg.local_rank
-        self.accelerator = accelerator
-        log_path = os.path.join(cfg.log_dir, f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-        log_dir = os.path.dirname(log_path)
-        os.makedirs(log_dir, exist_ok=True)
-        self.log_file = Path(log_path)
-        self.log_file.parent.mkdir(exist_ok=True)
+def init_logger(cfg):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    
+    if int(os.environ["RANK"]) == 0:
+        formatter = logging.Formatter(
+            f'[%(asctime)s] [rank: {int(os.environ["RANK"])}] [%(levelname)s] - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
         
-        # 主进程初始化日志文件
-        if self.accelerator.is_main_process:
-            with open(self.log_file, 'w') as f:
-                f.write(f"Training Log - Start at {datetime.now()}\n")
-
-    def log(self, message: str, level: str = "INFO"):
-        """核心日志方法"""
-        formatted = f"[{os.getpid()}]-[rank: {self.rank}]-[{datetime.now().strftime('%H:%M:%S')}]-[{level}] - {message}"
+        # 控制台Handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
         
-        # 主进程输出到控制台和文件
-        if self.accelerator.is_main_process:
-            print(formatted)
-            with open(self.log_file, 'a') as f:
-                f.write(formatted + "\n")
-        else:
-            # 其他进程仅打印
-            self.accelerator.print(formatted)
-
-    def critical(self, message: str):
-        self.log(message, "CRITICAL")
-        self.accelerator.fatal_error()
-
-    def error(self, message: str):
-        self.log(message, "ERROR")
-
-    def warning(self, message: str):
-        self.log(message, "WARNING")
-
-    def info(self, message: str):
-        self.log(message, "INFO")
-
-    def debug(self, message: str):
-        self.log(message, "DEBUG")
+        # 文件Handler
+        log_path = Path(cfg.log_dir) / f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    
+    return logger
         
 def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
     # 加载accelerate状态
@@ -150,16 +131,11 @@ def train(cfg: TrainPipelineConfig):
         find_unused_parameters=True,
         static_graph=False
     )
-    deepspeed_plugin = DeepSpeedPlugin(hf_ds_config=cfg.deepspeed)
-    accelerator = Accelerator(
-            deepspeed_plugin=DeepSpeedPlugin(
-                    hf_ds_config=cfg.deepspeed,
-            ),
-        )
     
-    logger = AccelerateLogger(accelerator, cfg)
+    deepspeed.init_distributed(auto_mpi_discovery=True)
     
-    if accelerator.is_main_process:
+    logger = init_logger(cfg)
+    if int(os.environ.get('RANK', 0)) == 0:
         logger.info(pformat(cfg.to_dict()))
         if cfg.wandb.enable and cfg.wandb.project:
             wandb_logger = WandBLogger(cfg)
@@ -170,7 +146,20 @@ def train(cfg: TrainPipelineConfig):
         wandb_logger = None
 
     if cfg.seed is not None:
-        set_seed(cfg.seed + accelerator.process_index)  # Add process index for deterministic seeding
+        set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
+    
+    if int(os.environ.get('RANK', 0)) == 0:
+        logger.info(pformat(cfg.to_dict()))
+        if cfg.wandb.enable and cfg.wandb.project:
+            wandb_logger = WandBLogger(cfg)
+        else:
+            wandb_logger = None
+            logger.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    else:
+        wandb_logger = None
+
+    if cfg.seed is not None:
+        set_seed(cfg.seed + int(os.environ.get('RANK', 0)))  # Add process index for deterministic seeding
 
     # Dataset and policy setup
     dataset = make_dataset(cfg)
@@ -183,13 +172,13 @@ def train(cfg: TrainPipelineConfig):
         cfg.policy.tokenizer_max_length=65
     policy = make_policy(
         cfg=cfg.policy,
-        device=accelerator.device,
+        device=torch.cuda.current_device(),
         ds_meta=dataset.meta,
     )
 
     # Environment setup (only in main process)
     eval_env = None
-    if accelerator.is_main_process and cfg.eval_freq > 0 and cfg.env is not None:
+    if int(os.environ.get('RANK', 0))==0 and cfg.eval_freq > 0 and cfg.env is not None:
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size)
 
     # Optimizer and scheduler
@@ -198,24 +187,24 @@ def train(cfg: TrainPipelineConfig):
 
     # Resume training state
     step = 0
-    if cfg.resume:
-        accelerator.load_state(cfg.checkpoint_path)
-        if accelerator.is_main_process:
-            metadata = torch.load(cfg.checkpoint_path / "metadata.pt")
-            step = int(metadata["step"])
-            # 广播step到所有进程
-            step_tensor = torch.tensor([step], device=accelerator.device)
-            torch.distributed.broadcast(step_tensor, src=0)
-            step = step_tensor.item()
-        else:
-            # 非主进程接收step值
-            step_tensor = torch.tensor([0], device=accelerator.device)
-            torch.distributed.broadcast(step_tensor, src=0)
-            step = step_tensor.item()
+    # if cfg.resume:
+    #     accelerator.load_state(cfg.checkpoint_path)
+    #     if accelerator.is_main_process:
+    #         metadata = torch.load(cfg.checkpoint_path / "metadata.pt")
+    #         step = int(metadata["step"])
+    #         # 广播step到所有进程
+    #         step_tensor = torch.tensor([step], device=accelerator.device)
+    #         torch.distributed.broadcast(step_tensor, src=0)
+    #         step = step_tensor.item()
+    #     else:
+    #         # 非主进程接收step值
+    #         step_tensor = torch.tensor([0], device=accelerator.device)
+    #         torch.distributed.broadcast(step_tensor, src=0)
+    #         step = step_tensor.item()
         
 
     # Logging setup (main process only)
-    if accelerator.is_main_process:
+    if int(os.environ.get('RANK', 0))==0:
         num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
         num_total_params = sum(p.numel() for p in policy.parameters())
         logger.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
@@ -233,14 +222,14 @@ def train(cfg: TrainPipelineConfig):
             dataset.episode_data_index,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
             shuffle=True,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index
+            num_replicas=int(os.environ["WORLD_SIZE"]),
+            rank=int(os.environ["RANK"])
         )
     else:
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset,
-            num_replicas=accelerator.num_processes,
-            rank=cfg.local_rank,
+            num_replicas=int(os.environ["WORLD_SIZE"]),
+            rank=int(os.environ["RANK"]),
             shuffle=True,
             seed=cfg.seed
         )
@@ -255,10 +244,17 @@ def train(cfg: TrainPipelineConfig):
         drop_last=False,
     )
     # Prepare components with Accelerator
-    policy, optimizer, lr_scheduler, dataloader = accelerator.prepare(
-        policy, optimizer, lr_scheduler, dataloader
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+        model=policy,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        config=cfg.deepspeed,
+        model_parameters=policy.parameters(),
     )
     dl_iter = cycle(dataloader)
+    
+    total_steps = cfg.steps * cfg.gradient_accumulation_steps
+    completed_steps = step * cfg.gradient_accumulation_steps
 
     # Metrics setup
     train_metrics = {
@@ -270,7 +266,7 @@ def train(cfg: TrainPipelineConfig):
         "optim_s": AverageMeter("optim_s", ":.3f"),
     }
     train_tracker = MetricsTracker(
-        cfg.batch_size * accelerator.num_processes * cfg.gradient_accumulation_steps,  # Total batch size across all processes
+        cfg.batch_size * int(os.environ["WORLD_SIZE"]) * cfg.gradient_accumulation_steps,  # Total batch size across all processes
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -278,8 +274,8 @@ def train(cfg: TrainPipelineConfig):
     )
 
     # Main training loop
-    accelerator.wait_for_everyone()
-    logger.info(f"Start training on {accelerator.num_processes} devices")
+    dist.barrier()
+    logger.info(f"Start training on {int(os.environ["WORLD_SIZE"])} devices")
     total_steps = cfg.steps * cfg.gradient_accumulation_steps
     completed_steps = step * cfg.gradient_accumulation_steps
     for _ in range(completed_steps, total_steps):
@@ -289,10 +285,14 @@ def train(cfg: TrainPipelineConfig):
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
 
-        print(os.environ.get('RANK'))
-        print(os.environ.get('LOCAL_RANK'))
-        print(os.environ.get('WORLD_SIZE'))
-        print(os.environ.get('MASTER_ADDR'))
+        rank = os.environ.get('RANK')
+        local_rank = os.environ.get('LOCAL_RANK')
+        node_rank = os.environ.get('NODE_RANK')
+        world_size = os.environ.get('WORLD_SIZE')
+        maddr = os.environ.get('MASTER_ADDR')
+        mport = os.environ.get('MASTER_PORT')
+        
+        print(f"rank: {rank}, local_rank: {local_rank}, node_rank: {node_rank}, world_size: {world_size}, maddr: {maddr}, mport: {mport}")
         
         break
         
