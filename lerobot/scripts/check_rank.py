@@ -116,7 +116,7 @@ def train(cfg: TrainPipelineConfig):
     exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
     print(f"exp_id: {exp_id}")
     
-    deepspeed.init_distributed(auto_mpi_discovery=True)
+    deepspeed.init_distributed()
     
     logger = init_logger(cfg)
     if int(os.environ.get('RANK', 0)) == 0:
