@@ -102,16 +102,17 @@ def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     
-    rank = int(os.environ.get('RANK'))
-    local_rank = int(os.environ.get('LOCAL_RANK'))
-    node_rank = int(os.environ.get('NODE_RANK'))
-    world_size = int(os.environ.get('WORLD_SIZE'))
-    maddr = os.environ.get('MASTER_ADDR')
-    mport = os.environ.get('MASTER_PORT')
+    rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
+    if rank != 0:
+        time.sleep(30)
+    # local_rank = int(os.environ.get('LOCAL_RANK'))
+    # world_size = int( os.environ["OMPI_COMM_WORLD_SIZE"])
+    # maddr = os.environ["AZ_BATCH_MASTER_NODE"]
+    # mport = os.environ.get('MASTER_PORT')
     exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
     print(f"exp_id: {exp_id}")
     
-    deepspeed.init_distributed(auto_mpi_discovery=True, distributed_port=29500, rank=rank, world_size=world_size)
+    deepspeed.init_distributed(auto_mpi_discovery=True)
     
     logger = init_logger(cfg)
     if int(os.environ.get('RANK', 0)) == 0:
