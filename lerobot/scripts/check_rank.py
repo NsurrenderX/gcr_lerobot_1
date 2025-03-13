@@ -102,19 +102,19 @@ def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     
-    rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-    if rank != 0:
-        print(f"rank: {rank} is not 0, waiting for 30 seconds")
-        time.sleep(30)
-    else:
-        print("rank is 0, directly starting deepspeed.init_distributed()")
-        print(os.environ["AZ_BATCH_MASTER_NODE"])
-    # local_rank = int(os.environ.get('LOCAL_RANK'))
-    # world_size = int( os.environ["OMPI_COMM_WORLD_SIZE"])
-    # maddr = os.environ["AZ_BATCH_MASTER_NODE"]
-    # mport = os.environ.get('MASTER_PORT')
-    exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
-    print(f"exp_id: {exp_id}")
+    # rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
+    # if rank != 0:
+    #     print(f"rank: {rank} is not 0, waiting for 30 seconds")
+    #     time.sleep(30)
+    # else:
+    #     print("rank is 0, directly starting deepspeed.init_distributed()")
+    #     print(os.environ["AZ_BATCH_MASTER_NODE"])
+    # # local_rank = int(os.environ.get('LOCAL_RANK'))
+    # # world_size = int( os.environ["OMPI_COMM_WORLD_SIZE"])
+    # # maddr = os.environ["AZ_BATCH_MASTER_NODE"]
+    # # mport = os.environ.get('MASTER_PORT')
+    # exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
+    # print(f"exp_id: {exp_id}")
     
     deepspeed.init_distributed()
     
