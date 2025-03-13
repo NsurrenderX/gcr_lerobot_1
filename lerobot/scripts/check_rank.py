@@ -104,7 +104,10 @@ def train(cfg: TrainPipelineConfig):
     
     rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
     if rank != 0:
+        print(f"rank: {rank} is not 0, waiting for 30 seconds")
         time.sleep(30)
+    else:
+        print("rank is 0, directly starting deepspeed.init_distributed()")
     # local_rank = int(os.environ.get('LOCAL_RANK'))
     # world_size = int( os.environ["OMPI_COMM_WORLD_SIZE"])
     # maddr = os.environ["AZ_BATCH_MASTER_NODE"]
