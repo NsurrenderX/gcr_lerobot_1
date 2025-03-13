@@ -102,10 +102,10 @@ def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     
-    rank = os.environ.get('RANK')
-    local_rank = os.environ.get('LOCAL_RANK')
-    node_rank = os.environ.get('NODE_RANK')
-    world_size = os.environ.get('WORLD_SIZE')
+    rank = int(os.environ.get('RANK'))
+    local_rank = int(os.environ.get('LOCAL_RANK'))
+    node_rank = int(os.environ.get('NODE_RANK'))
+    world_size = int(os.environ.get('WORLD_SIZE'))
     maddr = os.environ.get('MASTER_ADDR')
     mport = os.environ.get('MASTER_PORT')
     exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
