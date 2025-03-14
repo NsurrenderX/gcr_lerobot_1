@@ -248,8 +248,8 @@ class PI0Policy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
 
-        # self.language_tokenizer = AutoTokenizer.from_pretrained("/data_16T/lerobot_openx/paligemma-3b-pt-224/")
-        self.language_tokenizer = AutoTokenizer.from_pretrained("/mnt/wangxiaofa/RDT_module_params/paligemma-3b-pt-224/")
+        self.language_tokenizer = AutoTokenizer.from_pretrained("/data_16T/lerobot_openx/paligemma-3b-pt-224/")
+        # self.language_tokenizer = AutoTokenizer.from_pretrained("/mnt/wangxiaofa/RDT_module_params/paligemma-3b-pt-224/")
         self.model = PI0FlowMatching(config)
         
         self.dtype = torch.bfloat16
@@ -373,7 +373,7 @@ class PI0Policy(PreTrainedPolicy):
             if self.config.resize_imgs_with_padding is not None:
                 img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
 
-            # Normalize from range [0,1] to [-1,1] as expacted by siglip
+            # Normalize from range [0,1] to [-1,1] as expected by siglip
             img = img * 2.0 - 1.0
 
             bsize = img.shape[0]
@@ -570,7 +570,6 @@ class PI0FlowMatching(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
         return embs, pad_masks, att_masks
 
     def embed_suffix(self, state, noisy_actions, timestep):
@@ -627,6 +626,9 @@ class PI0FlowMatching(nn.Module):
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        # print(f"pad mask shape is: {pad_masks.shape}")
+        # print(f"att mask shape is: {att_masks.shape}")
 
         return embs, pad_masks, att_masks
 

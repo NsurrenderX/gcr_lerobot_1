@@ -106,10 +106,11 @@ class TrainPipelineConfig(HubMixin):
                 self.job_name = f"{self.env.type}_{self.policy.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
-            raise FileExistsError(
-                f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
-                f"Please change your output directory so that {self.output_dir} is not overwritten."
-            )
+            pass
+            # raise FileExistsError(
+            #     f"Output directory {self.output_dir} already exists and resume is {self.resume}. "
+            #     f"Please change your output directory so that {self.output_dir} is not overwritten."
+            # )
         elif not self.output_dir:
             now = dt.datetime.now()
             train_dir = f"{now:%Y-%m-%d}/{now:%H-%M-%S}_{self.job_name}"

@@ -111,9 +111,25 @@ class LeRobotDatasetMetadata:
             (self.root / "meta").mkdir(exist_ok=True, parents=True)
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
-
+            
+    def restrict_image_features(self, features: dict[str, dict], max_feature=2) -> dict[str, dict]:
+        """Restricts the number of image features to a maximum number."""
+        image_features = {k: v for k, v in features.items() if v["dtype"] in ["image", "video"]}
+        if len(image_features) > max_feature:
+            logging.warning(
+                f"Found {len(image_features)} image features, restricting to {max_feature}."
+            )
+            num_features = len(image_features)
+            image_features = dict(list(image_features.items())[:num_features-max_feature])
+        # remove feature not in image features
+        feature_to_return = features.copy()
+        for k in features.keys():
+            if k in image_features.keys():
+                feature_to_return.pop(k)
+        return feature_to_return
     def load_metadata(self):
         self.info = load_info(self.root)
+        self.info['features'] = self.restrict_image_features(self.info['features'])
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks, self.task_to_task_index = load_tasks(self.root)
         self.episodes = load_episodes(self.root)
@@ -478,7 +494,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 a single option which is the pyav decoder used by Torchvision. Defaults to pyav.
         """
         super().__init__()
-        print("__init__ 方法被调用")
+        # print("__init__ 方法被调用")
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms

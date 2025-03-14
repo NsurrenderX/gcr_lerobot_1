@@ -70,10 +70,10 @@ def init_logger(cfg):
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # 控制台Handler
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        # # 控制台Handler
+        # console_handler = logging.StreamHandler()
+        # console_handler.setFormatter(formatter)
+        # logger.addHandler(console_handler)
         
         # 文件Handler
         log_path = Path(cfg.log_dir) / f"logs/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -86,13 +86,11 @@ def init_logger(cfg):
 
 def update_policy(
     model_engine,
-    policy: PreTrainedPolicy,
     batch: Any,
 ) -> tuple[MetricsTracker, dict]:
     
-    policy.train()
-    with torch.amp.autocast(device_type="cuda", enabled=model_engine.fp16_enabled()):
-        loss, output_dict = policy.forward(batch)
+    batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+    loss, output_dict = model_engine(batch)
 
     model_engine.backward(loss)
     model_engine.step()
@@ -105,7 +103,7 @@ def train(cfg: TrainPipelineConfig):
     
     # Initialize DeepSpeed
     deepspeed.init_distributed()
-    logger = DeepSpeedLogger(cfg)
+    logger = init_logger(cfg)
     
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(pformat(cfg.to_dict()))
@@ -127,7 +125,7 @@ def train(cfg: TrainPipelineConfig):
     # Policy setup
     logger.info("Creating policy...")
     if hasattr(cfg.policy, "tokenizer_max_length"):
-        logger.info("Setting model's tokenizer_max_length to 60")
+        logger.info("Setting model's tokenizer_max_length to 65")
         cfg.policy.tokenizer_max_length=65
     policy = make_policy(
         cfg=cfg.policy,
@@ -144,26 +142,8 @@ def train(cfg: TrainPipelineConfig):
     logger.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    # DeepSpeed initialization
-    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
-        model=policy,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-        config=cfg.deepspeed,
-        model_parameters=policy.parameters(),
-    )
-
     # Resume training state
     step = 0
-    if cfg.resume:
-        load_path, client_state = model_engine.load_checkpoint(
-            cfg.checkpoint_path,
-            load_optimizer_states=True,
-            load_lr_scheduler_states=True
-        )
-        if load_path is not None:
-            step = client_state['step']
-            logger.info(f"Resumed training from step {step}")
 
     # Logging setup (main process only)
     if int(os.environ.get('RANK', 0)) == 0:
@@ -196,14 +176,24 @@ def train(cfg: TrainPipelineConfig):
             seed=cfg.seed
         )
 
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=cfg.batch_size,
-        sampler=sampler,
-        num_workers=cfg.num_workers,
-        pin_memory=True,
-        drop_last=False,
+    # DeepSpeed initialization
+    model_engine, optimizer, dataloader, lr_scheduler = deepspeed.initialize(
+        model=policy,
+        optimizer=optimizer,
+        training_data=dataset,
+        lr_scheduler=lr_scheduler,
+        config=cfg.deepspeed,
+        model_parameters=policy.parameters(),
     )
+    if cfg.resume:
+        load_path, client_state = model_engine.load_checkpoint(
+            cfg.checkpoint_path,
+            load_optimizer_states=True,
+            load_lr_scheduler_states=True
+        )
+        if load_path is not None:
+            step = client_state['step']
+            logger.info(f"Resumed training from step {step}")
     dl_iter = cycle(dataloader)
 
     # Metrics setup

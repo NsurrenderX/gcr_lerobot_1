@@ -29,6 +29,7 @@ from torch import distributed as dist
 from termcolor import colored
 from torch.amp import GradScaler
 from torch.optim import Optimizer
+from tqdm import tqdm
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler, DistEpisodeAwareSampler
@@ -152,7 +153,7 @@ def train(cfg: TrainPipelineConfig):
     # Policy setup
     logger.info("Creating policy...")
     if hasattr(cfg.policy, "tokenizer_max_length"):
-        logger.info("Setiing model's tokenizer_max_length to 60")
+        logger.info("Setiing model's tokenizer_max_length to 65")
         cfg.policy.tokenizer_max_length=65
     policy = make_policy(
         cfg=cfg.policy,
@@ -219,18 +220,19 @@ def train(cfg: TrainPipelineConfig):
         )
         shuffle = False
 
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=cfg.batch_size,
-        sampler=sampler,
-        num_workers=cfg.num_workers,
-        pin_memory=True,
-        drop_last=False,
-    )
+    # dataloader = torch.utils.data.DataLoader(
+    #     dataset,
+    #     batch_size=cfg.batch_size,
+    #     sampler=sampler,
+    #     num_workers=cfg.num_workers,
+    #     pin_memory=True,
+    #     drop_last=False,
+    # )
     # Prepare components with Accelerator
-    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+    model_engine, optimizer, dataloader, lr_scheduler = deepspeed.initialize(
         model=policy,
         optimizer=optimizer,
+        training_data=dataset,
         lr_scheduler=lr_scheduler,
         config=cfg.deepspeed,
         model_parameters=policy.parameters(),
@@ -259,8 +261,8 @@ def train(cfg: TrainPipelineConfig):
 
     # Main training loop
     dist.barrier()
-    world_size = int(os.environ["WORLD_SIZE"])
-    logger.info(f"Start training on {world_size} devices")
+    # world_size = int(os.environ["WORLD_SIZE"])
+    # logger.info(f"Start training on {world_size} devices")
     total_steps = cfg.steps * cfg.gradient_accumulation_steps
     completed_steps = step * cfg.gradient_accumulation_steps
     for _ in range(completed_steps, total_steps):
@@ -270,14 +272,14 @@ def train(cfg: TrainPipelineConfig):
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
 
-        rank = os.environ.get('RANK')
-        local_rank = os.environ.get('LOCAL_RANK')
-        node_rank = os.environ.get('NODE_RANK')
-        world_size = os.environ.get('WORLD_SIZE')
-        maddr = os.environ.get('MASTER_ADDR')
-        mport = os.environ.get('MASTER_PORT')
+        # rank = os.environ.get('RANK')
+        # local_rank = os.environ.get('LOCAL_RANK')
+        # node_rank = os.environ.get('NODE_RANK')
+        # world_size = os.environ.get('WORLD_SIZE')
+        # maddr = os.environ.get('MASTER_ADDR')
+        # mport = os.environ.get('MASTER_PORT')
         
-        print(f"rank: {rank}, local_rank: {local_rank}, node_rank: {node_rank}, world_size: {world_size}, maddr: {maddr}, mport: {mport}")
+        # print(f"rank: {rank}, local_rank: {local_rank}, node_rank: {node_rank}, world_size: {world_size}, maddr: {maddr}, mport: {mport}")
         
         for key in batch:
             
@@ -288,6 +290,11 @@ def train(cfg: TrainPipelineConfig):
                 print(f"example {key} 0:", batch[key][0])
             else:
                 print(key, type(batch[key]))
+        batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        for i in tqdm(range(100)):
+            loss, output_dict = model_engine(batch)
+        print("\nlosses:", loss)
+        print("\noutput_dict:", output_dict)
         break
         
     # Destroy process group
