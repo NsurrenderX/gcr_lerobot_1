@@ -41,7 +41,7 @@ class TrainPipelineConfig(HubMixin):
     # automatic gradient scaling is used.
     use_amp: bool = False
     mixed_precision: str | None = None
-    gradient_accumulation_steps: int = 1
+    gradient_accumulation_steps: int = 4
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
@@ -51,10 +51,10 @@ class TrainPipelineConfig(HubMixin):
     batch_size: int = 1
     steps: int = 1000_000
     eval_freq: int = 2000
-    log_freq: int = 50
+    log_freq: int = 100
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
-    save_freq: int = 400
+    save_freq: int = 10000
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
@@ -87,17 +87,18 @@ class TrainPipelineConfig(HubMixin):
             self.policy.pretrained_path = policy_path
         elif self.resume:
             # The entire train config is already loaded, we just need to get the checkpoint dir
-            config_path = parser.parse_arg("config_path")
-            if not config_path:
-                raise ValueError("A config_path is expected when resuming a run.")
-            if not Path(config_path).resolve().exists():
-                raise NotADirectoryError(
-                    f"{config_path=} is expected to be a local path. "
-                    "Resuming from the hub is not supported for now."
-                )
-            policy_path = Path(config_path).parent
-            self.policy.pretrained_path = policy_path
-            self.checkpoint_path = policy_path.parent
+            # config_path = parser.parse_arg("config_path")
+            # if not config_path:
+            #     raise ValueError("A config_path is expected when resuming a run.")
+            # if not Path(config_path).resolve().exists():
+            #     raise NotADirectoryError(
+            #         f"{config_path=} is expected to be a local path. "
+            #         "Resuming from the hub is not supported for now."
+            #     )
+            # policy_path = Path(config_path).parent
+            # self.policy.pretrained_path = policy_path
+            # self.checkpoint_path = policy_path.parent
+            pass
 
         if not self.job_name:
             if self.env is None:
@@ -121,7 +122,7 @@ class TrainPipelineConfig(HubMixin):
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
-        elif self.use_policy_training_preset and not self.resume:
+        elif self.use_policy_training_preset:
             self.optimizer = self.policy.get_optimizer_preset()
             self.scheduler = self.policy.get_scheduler_preset()
 

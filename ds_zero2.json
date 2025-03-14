@@ -6,6 +6,8 @@
         "enabled": false
     },
     "train_micro_batch_size_per_gpu": 4,
+    "gradient_accumulation_steps": 4,
+    "gradient_clipping": 1.0,
     "zero_optimization": {
         "stage": 2,
         "overlap_comm": true,
