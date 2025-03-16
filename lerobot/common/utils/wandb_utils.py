@@ -69,7 +69,14 @@ class WandBLogger:
         os.environ["WANDB_SILENT"] = "True"
         import wandb
 
-        wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
+        if cfg.resume:
+            if self.cfg.id is not None:
+                wandb_run_id = self.cfg.id
+            else:
+                wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
+        else:
+            wandb_run_id = None
+        # wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
         wandb.init(
             id=wandb_run_id,
             project=self.cfg.project,

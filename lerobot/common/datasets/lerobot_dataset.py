@@ -1484,7 +1484,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
     @property
     def num_episodes(self) -> int:
         """Number of episodes selected."""
-        return len(self.episodes) if self.episodes is not None else -404
+        return len(self.episodes) if self.episodes is not None else 1
 
     @property
     def features(self) -> dict[str, dict]:

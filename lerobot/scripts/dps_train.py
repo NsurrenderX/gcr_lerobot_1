@@ -172,6 +172,7 @@ def train(cfg: TrainPipelineConfig):
             rank=int(os.environ.get('RANK', 0))
         )
     else:
+        logger.info("Creating DistributedSampler")
         sampler = DistributedSampler(
             dataset,
             num_replicas=int(os.environ.get('WORLD_SIZE', 1)),
