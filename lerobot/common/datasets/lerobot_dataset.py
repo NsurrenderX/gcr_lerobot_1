@@ -1488,11 +1488,6 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         return len(self.dataset) if self.dataset is not None else self.meta.total_frames
 
     @property
-    def num_episodes(self) -> int:
-        """Number of episodes selected."""
-        return self.num_episodes if self.num_episodes is not None else 1
-
-    @property
     def features(self) -> dict[str, dict]:
         return self.meta.features
 
