@@ -46,6 +46,7 @@ class WandBConfig:
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None
+    id: str = "7258056839.59298-05824d03-26a7-488c-abda-e9b82731f1c5"
 
 
 @dataclass
