@@ -112,7 +112,7 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
             
-    def restrict_image_features(self, features: dict[str, dict], max_feature=3) -> dict[str, dict]:
+    def restrict_image_features(self, features: dict[str, dict], max_feature=2) -> dict[str, dict]:
         """Restricts the number of image features to a maximum number."""
         image_features = {k: v for k, v in features.items() if v["dtype"] in ["image", "video"]}
         if len(image_features) > max_feature:
