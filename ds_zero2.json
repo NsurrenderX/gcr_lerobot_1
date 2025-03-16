@@ -5,8 +5,8 @@
     "fp16": {
         "enabled": false
     },
-    "train_micro_batch_size_per_gpu": 6,
-    "gradient_accumulation_steps": 4,
+    "train_micro_batch_size_per_gpu": 4,
+    "gradient_accumulation_steps": 2,
     "gradient_clipping": 1.0,
     "zero_optimization": {
         "stage": 2,
@@ -15,5 +15,6 @@
         "sub_group_size": 1e9,
         "reduce_scatter": true,
         "reduce_bucket_size": 2e8
-    }
+    },
+    "gradient_checkpointing": true
 }

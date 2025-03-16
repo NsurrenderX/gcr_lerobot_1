@@ -125,13 +125,16 @@ def train(cfg: TrainPipelineConfig):
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed, data_mix="oxe_magic_soup_plus",
                            vla2root_json="vla2root.json")
+    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+    #                        seed=cfg.seed, data_mix="oxe_magic_soup_plus",
+    #                        vla2root_json="vla2root_bak.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
     logger.info("Creating policy...")
     if hasattr(cfg.policy, "tokenizer_max_length"):
-        logger.info("Setting model's tokenizer_max_length to 65")
-        cfg.policy.tokenizer_max_length=65
+        logger.info("Setting model's tokenizer_max_length to 100")
+        cfg.policy.tokenizer_max_length=100
     logger.info("Still creating policy...")
     policy = make_policy(
         cfg=cfg.policy,

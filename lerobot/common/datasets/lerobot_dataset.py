@@ -566,7 +566,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.stats = aggregate_stats(episodes_stats)
 
         # Load actual data
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - Trying to load dataset...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - Trying to load dataset {self.repo_id}...")
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -1351,6 +1351,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         print(included_datasets, sample_weights)
         # get dataset and dataset length
         parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        # parent_dir = "/data_16T/lerobot_openx/"
         datasets = []
         dataset_sizes = []
         dataset_names = []
@@ -1398,10 +1399,15 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         
         # sample and use NamedSubset to contains dataset_name
         selected_subsets = []
+        episode_count = 0
         for dataset, num_samples, dataset_name in zip(datasets, dataset_sample_counts, dataset_names):
             indices = list(range(len(dataset)))
             sampled_indices = random.sample(indices, min(num_samples, len(dataset)))  # 采样
+            episode_this_dataset = int(dataset.num_episodes * (min(num_samples, len(dataset))/len(dataset)))
+            episode_count += episode_this_dataset
             selected_subsets.append(NamedSubset(dataset, sampled_indices, dataset_name))
+        
+        self.episodes = episode_count
 
         # concat the selected dataset
         self.dataset = ConcatDataset(selected_subsets)
