@@ -49,7 +49,7 @@ class TrainPipelineConfig(HubMixin):
     local_rank: int = 0
     num_workers: int = 8
     batch_size: int = 1
-    steps: int = 1000_000
+    steps: int = 2000_000
     eval_freq: int = 2000
     log_freq: int = 100
     save_checkpoint: bool = True
