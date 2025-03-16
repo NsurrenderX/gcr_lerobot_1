@@ -1407,7 +1407,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             episode_count += episode_this_dataset
             selected_subsets.append(NamedSubset(dataset, sampled_indices, dataset_name))
         
-        self.episodes = episode_count
+        self.num_episodes = episode_count
 
         # concat the selected dataset
         self.dataset = ConcatDataset(selected_subsets)
@@ -1490,7 +1490,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
     @property
     def num_episodes(self) -> int:
         """Number of episodes selected."""
-        return len(self.episodes) if self.episodes is not None else 1
+        return self.num_episodes if self.num_episodes is not None else 1
 
     @property
     def features(self) -> dict[str, dict]:
