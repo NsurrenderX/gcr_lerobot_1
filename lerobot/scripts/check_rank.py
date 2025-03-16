@@ -34,6 +34,7 @@ from tqdm import tqdm
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.sampler import EpisodeAwareSampler, DistEpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.lerobot_dataset import MultiDatasetforDistTraining
 from lerobot.common.envs.factory import make_env
 from lerobot.common.optim.factory import make_optimizer_and_scheduler
 from lerobot.common.policies.factory import make_policy
@@ -41,12 +42,6 @@ from lerobot.common.policies.pretrained import PreTrainedPolicy
 from lerobot.common.policies.utils import get_device_from_parameters
 from lerobot.common.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.common.utils.random_utils import set_seed
-from lerobot.common.utils.train_utils import (
-    get_step_checkpoint_dir,
-    get_step_identifier,
-    save_checkpoint,
-    update_last_checkpoint,
-)
 from lerobot.common.utils.utils import (
     format_big_number,
     get_safe_torch_device,
@@ -57,6 +52,7 @@ from lerobot.common.utils.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.scripts.eval import eval_policy
+from lerobot.common.datasets.transforms import ImageTransforms
 
 def init_logger(cfg):
     logger = logging.getLogger(__name__)
@@ -103,19 +99,11 @@ def load_training_state(checkpoint_path, optimizer, lr_scheduler, accelerator):
 def train(cfg: TrainPipelineConfig):
     cfg.validate()
     
-    # rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
-    # if rank != 0:
-    #     print(f"rank: {rank} is not 0, waiting for 30 seconds")
-    #     time.sleep(30)
-    # else:
-    #     print("rank is 0, directly starting deepspeed.init_distributed()")
-    #     print(os.environ["AZ_BATCH_MASTER_NODE"])
-    # # local_rank = int(os.environ.get('LOCAL_RANK'))
-    # # world_size = int( os.environ["OMPI_COMM_WORLD_SIZE"])
-    # # maddr = os.environ["AZ_BATCH_MASTER_NODE"]
-    # # mport = os.environ.get('MASTER_PORT')
-    # exp_id = os.environ.get("AZUREML_EXPERIMENT_ID", "No id found")
-    # print(f"exp_id: {exp_id}")
+    image_transforms = (
+        ImageTransforms(cfg.dataset.image_transforms)
+    )
+    
+    print(image_transforms, cfg.dataset.image_transforms)
     
     deepspeed.init_distributed()
     
@@ -147,7 +135,9 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))  # Add process index for deterministic seeding
 
     # Dataset and policy setup
-    dataset = make_dataset(cfg)
+    dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+                           seed=cfg.seed, data_mix="oxe_magic_soup_plus",
+                           vla2root_json="vla2root.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
@@ -155,11 +145,13 @@ def train(cfg: TrainPipelineConfig):
     if hasattr(cfg.policy, "tokenizer_max_length"):
         logger.info("Setiing model's tokenizer_max_length to 65")
         cfg.policy.tokenizer_max_length=65
+    logger.info("Still creating policy...")
     policy = make_policy(
         cfg=cfg.policy,
         device=torch.cuda.current_device(),
         ds_meta=dataset.meta,
     )
+    logger.info("Policy model created...")
 
     # Environment setup (only in main process)
     eval_env = None
@@ -203,6 +195,7 @@ def train(cfg: TrainPipelineConfig):
 
     # Dataloader setup
     if hasattr(cfg.policy, "drop_n_last_frames"):
+        logger.info("Creating EpisodeAwareSampler with drop_n_last_frames")
         sampler = DistEpisodeAwareSampler(
             dataset.episode_data_index,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
@@ -211,6 +204,7 @@ def train(cfg: TrainPipelineConfig):
             rank=int(os.environ["RANK"])
         )
     else:
+        logger.info("Creating DistributedSampler")
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset,
             num_replicas=int(os.environ["WORLD_SIZE"]),

@@ -176,6 +176,7 @@ class ImageTransformsConfig:
     # By default, transforms are applied in Torchvision's suggested order (shown below).
     # Set this to True to apply them in a random order.
     random_order: bool = False
+    img_size: int = 224
     tfs: dict[str, ImageTransformConfig] = field(
         default_factory=lambda: {
             "brightness": ImageTransformConfig(
@@ -214,6 +215,8 @@ def make_transform_from_config(cfg: ImageTransformConfig):
         return v2.ColorJitter(**cfg.kwargs)
     elif cfg.type == "SharpnessJitter":
         return SharpnessJitter(**cfg.kwargs)
+    elif cfg.type == "Resize":
+        return v2.Resize(**cfg.kwargs)
     else:
         raise ValueError(f"Transform '{cfg.type}' is not valid.")
 
@@ -235,10 +238,13 @@ class ImageTransforms(Transform):
             self.weights.append(tf_cfg.weight)
 
         n_subset = min(len(self.transforms), cfg.max_num_transforms)
+        self.base_tf = v2.Resize(size=(cfg.img_size, cfg.img_size))
         if n_subset == 0 or not cfg.enable:
-            self.tf = v2.Identity()
+            # self.tf = v2.Identity()
+            self.tf = self.base_tf
         else:
             self.tf = RandomSubsetApply(
+                base_transforms=self.base_tf,
                 transforms=list(self.transforms.values()),
                 p=self.weights,
                 n_subset=n_subset,

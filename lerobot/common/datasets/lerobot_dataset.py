@@ -15,6 +15,9 @@
 # limitations under the License.
 import contextlib
 import logging
+import random
+import json
+import os
 import shutil
 import polars as pl
 from pathlib import Path
@@ -27,13 +30,21 @@ import packaging.version
 import PIL.Image
 import torch
 import torch.utils
+
+from torch.utils.data import ConcatDataset, Subset
+
 from datasets import concatenate_datasets, load_dataset, Dataset
+
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import REPOCARD_NAME
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.common.constants import HF_LEROBOT_HOME
-from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
+from lerobot.common.datasets.oxe_configs import OXE_DATASET_CONFIGS
+from lerobot.common.datasets.mixtures import OXE_NAMED_MIXTURES
+# from lerobot.common.datasets.factory import resolve_delta_timestamps
+from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats, aggregate_multi_stats
+from lerobot.common.datasets.transforms import ImageTransforms
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
 from lerobot.common.datasets.utils import (
     DEFAULT_FEATURES,
@@ -74,8 +85,27 @@ from lerobot.common.datasets.video_utils import (
     get_video_info,
 )
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.configs.policies import PreTrainedConfig
 
 CODEBASE_VERSION = "v2.1"
+
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    print(f"Random seed set to: {seed}")
+    
+class NamedSubset(Subset):
+    def __init__(self, dataset, indices, dataset_name):
+        super().__init__(dataset, indices)
+        self.dataset_name = dataset_name  # 存储数据集名称
+
+    def __getitem__(self, idx):
+        data = super().__getitem__(idx)  # 获取原始数据
+        return {**data, "dataset_name": self.dataset_name}
 
 def parquet_to_dataset(parquet_file: str, split: str = "train") -> datasets.Dataset:
     """Converts a parquet file to a Hugging Face dataset."""
@@ -112,7 +142,7 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
             
-    def restrict_image_features(self, features: dict[str, dict], max_feature=2) -> dict[str, dict]:
+    def restrict_image_features(self, features: dict[str, dict], max_feature=5) -> dict[str, dict]:
         """Restricts the number of image features to a maximum number."""
         image_features = {k: v for k, v in features.items() if v["dtype"] in ["image", "video"]}
         if len(image_features) > max_feature:
@@ -123,9 +153,10 @@ class LeRobotDatasetMetadata:
             image_features = dict(list(image_features.items())[:num_features-max_feature])
         # remove feature not in image features
         feature_to_return = features.copy()
-        for k in features.keys():
-            if k in image_features.keys():
-                feature_to_return.pop(k)
+        if len(image_features) > max_feature:
+            for k in features.keys():
+                if k in image_features.keys():
+                    feature_to_return.pop(k)
         return feature_to_return
     def load_metadata(self):
         self.info = load_info(self.root)
@@ -375,6 +406,20 @@ class LeRobotDatasetMetadata:
             raise ValueError()
         write_json(obj.info, obj.root / INFO_PATH)
         obj.revision = None
+        return obj
+    
+    @classmethod
+    def create_with_stats_feats(
+        cls, 
+        stats, 
+        features,
+        fps = 30,
+        robot_type = "all",
+        use_videos = True,
+        ) -> "LeRobotDatasetMetadata":
+        obj = cls.__new__(cls)
+        obj.stats = stats
+        obj.info = create_empty_dataset_info(CODEBASE_VERSION, fps, robot_type, features, use_videos)
         return obj
 
 
@@ -1256,3 +1301,231 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             f"  Transformations: {self.image_transforms},\n"
             f")"
         )
+
+
+class MultiDatasetforDistTraining(torch.utils.data.Dataset):
+    def __init__(self, cfg, image_transforms, seed: int = 1000, data_mix: str = "toy", vla2root_json: str = None, banlance_weight=True):
+        """
+        参数:
+            cfg (TrainPipelineConfig): 训练配置文件
+            image_transforms (ImageTransforms): 对图像进行的变化，因为不同数据集图像size不一样，
+                所以先将其resize成224。我对ImageTransforms进行了修改, 
+                代码在：lerobot/common/datasets/transforms.py，具体修改的点是：
+                - ImageTransformsConfig：增加一个变量img_size
+                - make_transform_from_config函数增加Resize
+                - ImageTransforms：默认的变化改为Resize而不是Identity()
+            seed (int): 随机数种子，保证从各个数据集采样的数据在多次实验中是一样的
+            data_mix (str): 对应scripts/mixtures.py文件中的key值
+            vla2root_json (str): scripts/mixtures.py的数据集对应的本地数据集的root路径
+            banlance_weight: 是否均衡权重，默认为True, 参考：https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/datasets.py#L115
+        其他修改点：
+            - aggregate_stats：增加了一个参数，主要用于图像key的选择
+            - LeRobotDatasetMetadata：增加一个create_with_stats_feats，主要用于创建meta
+        使用：
+            python scripts/openx_dataset.py \
+            --policy.path=lerobot/pi0 \
+            --dataset.repo_id=openx/1 \
+            --dataset.image_transforms.img_size=384
+        __getitem__返回：
+            - action: 机器人的动作，跟单数据集一样
+            - observation.state: 机器人的状态，跟单数据集一样
+            - source: 内容是：{dataset_name}_{episode_idx}，表明它来自哪个数据集的哪个视频
+            - observation.images.{view}: 3个视角，参考https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
+                如果某个数据集没有某个视觉的图像，将其值设置为0：item[f"observation.images.{new_key}"] = torch.zeros_like(exist_image)
+        """
+        super().__init__()
+        self.episodes = None
+        # set seed
+        set_seed(seed)
+        # get sample weights
+        mixture_spec = OXE_NAMED_MIXTURES[data_mix]
+        included_datasets, sample_weights = [], []
+        for d_name, d_weight in mixture_spec:
+            if d_name in included_datasets:
+                print(f"Skipping Duplicate Dataset: `{(d_name, d_weight)}`")
+                continue
+
+            included_datasets.append(d_name)
+            sample_weights.append(d_weight)
+        
+        print(included_datasets, sample_weights)
+        # get dataset and dataset length
+        parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        datasets = []
+        dataset_sizes = []
+        dataset_names = []
+        meta_features = None
+        with open(vla2root_json, "r") as f:
+            vla2data_root = json.load(f)
+        for dataset_name in included_datasets:
+            if dataset_name in vla2data_root.keys():
+                data_root = vla2data_root[dataset_name]
+                data_root = os.path.join(parent_dir, data_root)
+                repo_id = f"bulldog-{dataset_name}" # any
+                ds_meta = LeRobotDatasetMetadata(repo_id, root=data_root)
+                if meta_features == None:
+                    meta_features = ds_meta.features
+                delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+                dataset = LeRobotDataset(
+                    repo_id, 
+                    root=data_root,
+                    delta_timestamps=delta_timestamps,
+                    image_transforms=image_transforms,
+                    video_backend=cfg.dataset.video_backend
+                )
+                datasets.append(dataset)
+                dataset_sizes.append(len(dataset))
+                dataset_names.append(dataset_name)
+            else:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - {dataset_name} not found in vla2root.json, skipping...")
+        if banlance_weight:
+            # filter out the datasets not in vla2root.json
+            new_sample_weights = [
+                sw 
+                for sw, dataset in zip(sample_weights, included_datasets) 
+                if dataset in vla2data_root.keys()
+            ]
+            assert len(new_sample_weights) == len(datasets), "Sample weights and datasets should have the same length"
+            sample_weights = np.array(new_sample_weights) * np.array(dataset_sizes)
+            print(f"Banlanced:{sample_weights}")
+        sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+        print(f"Final weights:{sample_weights}")
+        dataset_sample_counts = (sample_weights * dataset_sizes).astype(int)  # 计算子集大小
+
+        print("Final sampling counts:")
+        for i in range(len(dataset_sample_counts)):
+            print(f"Dataset:{dataset_names[i]} num:{dataset_sample_counts[i]} total:{len(datasets[i])}")
+        
+        # sample and use NamedSubset to contains dataset_name
+        selected_subsets = []
+        for dataset, num_samples, dataset_name in zip(datasets, dataset_sample_counts, dataset_names):
+            indices = list(range(len(dataset)))
+            sampled_indices = random.sample(indices, min(num_samples, len(dataset)))  # 采样
+            selected_subsets.append(NamedSubset(dataset, sampled_indices, dataset_name))
+
+        # concat the selected dataset
+        self.dataset = ConcatDataset(selected_subsets)
+        
+        # calculate stats
+        all_new_obs_image_keys = ["observation.images.primary", 
+                                  "observation.images.secondary", 
+                                  "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
+        self.stats = aggregate_multi_stats(datasets, dataset_names) # Note: I modified this function
+        # print(f"Aggregated stats:{self.stats}")
+        # update meta_features
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")
+        new_obs_image_keys = []
+        for key in self.stats.keys():
+            if key in all_new_obs_image_keys:
+                new_obs_image_keys.append(key)
+        self.new_obs_image_keys = new_obs_image_keys
+        img_feats = {}
+        # first remove keys contaning images
+        old_keys = list(meta_features.keys())
+        print("\n\n")
+        for key in old_keys:
+            print(key, meta_features[key])
+            if meta_features[key]["dtype"] in ["image", "video"]:
+                img_feats = meta_features[key]
+                del meta_features[key]
+        # update the size of image feats
+        # print(f"Old image features:{img_feats}")
+        img_size = cfg.dataset.image_transforms.img_size
+        img_feats["shape"] = (img_size, img_size, 3)
+        img_feats["info"]["video.height"] = img_size
+        img_feats["info"]["video.width"] = img_size
+        # then use the new image keys
+        for new_key in new_obs_image_keys:
+            meta_features[new_key] = img_feats
+        print(f"Unified input features:{meta_features}")
+        # finally create the meta class
+        self.meta = LeRobotDatasetMetadata.create_with_stats_feats(stats=self.stats, features=meta_features) # Note: I added a class function
+    
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        item = self.dataset[index]
+        # for key, value in item.items():
+        #     print(f"{key}: {value}")
+        dataset_name = item["dataset_name"]
+        # unify the observation
+        data_config = OXE_DATASET_CONFIGS[dataset_name]
+        image_obs_keys = data_config["image_obs_keys"]
+        exist_image = None
+        for new_key, old_key in image_obs_keys.items():
+            if old_key != None:
+                item[f"observation.images.{new_key}"] = item[f"observation.images.{old_key}"]
+                exist_image = item[f"observation.images.{old_key}"]
+                # print(type(exist_image), exist_image.shape)
+                del item[f"observation.images.{old_key}"]
+            else:
+                # if missing, use zero
+                item[f"observation.images.{new_key}"] = torch.zeros_like(exist_image)
+        # remove other image keys
+        keys = list(item.keys())
+        # print(keys, self.new_obs_image_keys)
+        for key in keys:
+            if "images" in key and key not in self.new_obs_image_keys:
+                del item[key]
+        if "episode_index" in item:
+            item["source"] = f"{item['dataset_name']}_episode_id_{item['episode_index']}"
+        elif "ep_idx" in item:
+            item["source"] = f"{item['dataset_name']}_episode_id_{item['ep_idx']}"
+        else:
+            item["source"] = f"{item['dataset_name']}_with_unknown_episode_id"
+        # print(item.keys())
+        return item
+    @property
+    def num_frames(self) -> int:
+        """Number of frames in selected episodes."""
+        return len(self.dataset) if self.dataset is not None else self.meta.total_frames
+
+    @property
+    def num_episodes(self) -> int:
+        """Number of episodes selected."""
+        return len(self.episodes) if self.episodes is not None else -404
+
+    @property
+    def features(self) -> dict[str, dict]:
+        return self.meta.features
+
+    @property
+    def hf_features(self) -> datasets.Features:
+        """Features of the hf_dataset."""
+        if self.dataset is not None:
+            return self.dataset.features
+        else:
+            return get_hf_features_from_features(self.features)
+    
+def resolve_delta_timestamps(
+    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
+) -> dict[str, list] | None:
+    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the PreTrainedConfig.
+
+    Args:
+        cfg (PreTrainedConfig): The PreTrainedConfig to read delta_indices from.
+        ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
+            delta_timestamps against.
+
+    Returns:
+        dict[str, list] | None: A dictionary of delta_timestamps, e.g.:
+            {
+                "observation.state": [-0.04, -0.02, 0]
+                "observation.action": [-0.02, 0, 0.02]
+            }
+            returns `None` if the the resulting dict is empty.
+    """
+    delta_timestamps = {}
+    for key in ds_meta.features:
+        if key == "next.reward" and cfg.reward_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
+        if key == "action" and cfg.action_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
+        if key.startswith("observation.") and cfg.observation_delta_indices is not None:
+            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+
+    if len(delta_timestamps) == 0:
+        delta_timestamps = None
+
+    return delta_timestamps

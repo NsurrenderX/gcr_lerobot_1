@@ -31,6 +31,8 @@ from torch import distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 
 from lerobot.common.datasets.factory import make_dataset
+from lerobot.common.datasets.transforms import ImageTransforms
+from lerobot.common.datasets.lerobot_dataset import MultiDatasetforDistTraining
 from lerobot.common.datasets.sampler import EpisodeAwareSampler, DistEpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -102,6 +104,10 @@ def train(cfg: TrainPipelineConfig):
     deepspeed.init_distributed()
     logger = init_logger(cfg)
     
+    image_transforms = (
+        ImageTransforms(cfg.dataset.image_transforms)
+    )
+    
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(pformat(cfg.to_dict()))
         if cfg.wandb.enable and cfg.wandb.project:
@@ -116,7 +122,9 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
 
     # Dataset setup
-    dataset = make_dataset(cfg)
+    dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+                           seed=cfg.seed, data_mix="oxe_magic_soup_plus",
+                           vla2root_json="vla2root.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
@@ -124,11 +132,13 @@ def train(cfg: TrainPipelineConfig):
     if hasattr(cfg.policy, "tokenizer_max_length"):
         logger.info("Setting model's tokenizer_max_length to 65")
         cfg.policy.tokenizer_max_length=65
+    logger.info("Still creating policy...")
     policy = make_policy(
         cfg=cfg.policy,
         device=torch.cuda.current_device(),
         ds_meta=dataset.meta,
     )
+    logger.info("Policy model created...")
 
     # Environment setup (only in main process)
     eval_env = None

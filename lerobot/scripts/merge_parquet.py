@@ -5,7 +5,7 @@ import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 # 设置输入目录列表（支持多个根目录）和输出文件路径
-format_dir = "/data_16T/lerobot_openx/kuka_lerobot"
+format_dir = "/data_16T/lerobot_openx/fmb_dataset_lerobot"
 input_dirs = [
     os.path.join(format_dir, "data"),  # 替换为你的第二个目录路径
 ]
