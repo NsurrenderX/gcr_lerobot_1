@@ -1446,6 +1446,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         print(f"Unified input features:{meta_features}")
         # finally create the meta class
         self.meta = LeRobotDatasetMetadata.create_with_stats_feats(stats=self.stats, features=meta_features) # Note: I added a class function
+        self.meta.repo_id = "Prometheus"
     
     def __len__(self):
         return len(self.dataset)

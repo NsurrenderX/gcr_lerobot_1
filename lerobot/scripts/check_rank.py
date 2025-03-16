@@ -135,10 +135,13 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))  # Add process index for deterministic seeding
 
     # Dataset and policy setup
+    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+    #                        seed=cfg.seed, data_mix="oxe_magic_soup_plus",
+    #                        vla2root_json="vla2root.json")
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed, data_mix="oxe_magic_soup_plus",
-                           vla2root_json="vla2root.json")
-    logger.info(f"Dataset: {dataset}")
+                           vla2root_json="vla2root_bak_single.json")
+    logger.info(f"Dataset Meta: {dataset.meta}")
 
     # Policy setup
     logger.info("Creating policy...")
@@ -284,11 +287,11 @@ def train(cfg: TrainPipelineConfig):
                 print(f"example {key} 0:", batch[key][0])
             else:
                 print(key, type(batch[key]))
-        batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        for i in tqdm(range(100)):
-            loss, output_dict = model_engine(batch)
-        print("\nlosses:", loss)
-        print("\noutput_dict:", output_dict)
+        # batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        # for i in tqdm(range(100)):
+        #     loss, output_dict = model_engine(batch)
+        # print("\nlosses:", loss)
+        # print("\noutput_dict:", output_dict)
         break
         
     # Destroy process group
