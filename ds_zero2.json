@@ -5,7 +5,7 @@
     "fp16": {
         "enabled": false
     },
-    "train_micro_batch_size_per_gpu": 4,
+    "train_micro_batch_size_per_gpu": 2,
     "gradient_accumulation_steps": 4,
     "gradient_clipping": 1.0,
     "zero_optimization": {
@@ -13,8 +13,8 @@
         "overlap_comm": true,
         "contiguous_gradients": true,
         "reduce_scatter": true,
-        "reduce_bucket_size": 2e8,
-        "allgather_bucket_size": 2e8,
+        "reduce_bucket_size": 2.5e8,
+        "allgather_bucket_size": 2.5e8,
         "round_robin_gradients": true
     }
 }

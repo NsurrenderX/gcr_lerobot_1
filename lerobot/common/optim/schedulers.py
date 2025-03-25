@@ -105,8 +105,11 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
             if current_step < self.num_warmup_steps:
                 return linear_warmup_schedule(current_step)
-
-            return cosine_decay_schedule(current_step)
+            else:
+                if self.num_decay_steps == -1:
+                    return 1
+                else:
+                    return cosine_decay_schedule(current_step)
 
         return LambdaLR(optimizer, lr_lambda, -1)
 

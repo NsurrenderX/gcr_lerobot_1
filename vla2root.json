@@ -25,5 +25,6 @@
     "bc_z": "bc_z_0.1.0_lerobot",
     "fmb_dataset": "fmb_dataset_lerobot",
     "dobbe": "dobbe_lerobot",
-    "droid": "droid"
+    "droid": "droid",
+    "agibot_alpha": "agibotworld_3"
 }

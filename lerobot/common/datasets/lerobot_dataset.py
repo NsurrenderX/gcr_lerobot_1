@@ -85,7 +85,10 @@ from lerobot.common.datasets.video_utils import (
     get_video_info,
 )
 from lerobot.common.robot_devices.robots.utils import Robot
+from lerobot.configs import parser
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
+from tabulate import tabulate
 
 CODEBASE_VERSION = "v2.1"
 
@@ -1352,9 +1355,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # get dataset and dataset length
         parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
         # parent_dir = "/data_16T/lerobot_openx/"
-        datasets = []
-        dataset_sizes = []
-        dataset_names = []
+        self.datasets = []
+        self.dataset_sizes = []
+        self.dataset_names = []
         meta_features = None
         with open(vla2root_json, "r") as f:
             vla2data_root = json.load(f)
@@ -1374,9 +1377,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     image_transforms=image_transforms,
                     video_backend=cfg.dataset.video_backend
                 )
-                datasets.append(dataset)
-                dataset_sizes.append(len(dataset))
-                dataset_names.append(dataset_name)
+                self.datasets.append(dataset)
+                self.dataset_sizes.append(len(dataset))
+                self.dataset_names.append(dataset_name)
             else:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - {dataset_name} not found in vla2root.json, skipping...")
         if banlance_weight:
@@ -1386,38 +1389,52 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 for sw, dataset in zip(sample_weights, included_datasets) 
                 if dataset in vla2data_root.keys()
             ]
-            assert len(new_sample_weights) == len(datasets), "Sample weights and datasets should have the same length"
-            sample_weights = np.array(new_sample_weights) * np.array(dataset_sizes)
+            sample_weights = np.array(new_sample_weights) * np.array(self.dataset_sizes)
             print(f"Banlanced:{sample_weights}")
-        sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+        self.sample_weights = np.array(sample_weights) / np.sum(sample_weights)
         print(f"Final weights:{sample_weights}")
-        dataset_sample_counts = (sample_weights * dataset_sizes).astype(int)  # 计算子集大小
-
-        print("Final sampling counts:")
-        for i in range(len(dataset_sample_counts)):
-            print(f"Dataset:{dataset_names[i]} num:{dataset_sample_counts[i]} total:{len(datasets[i])}")
+        self.dataset_len = sum(self.dataset_sizes)
+        dataset_sample_counts = (self.sample_weights * self.dataset_len).astype(int)  # 计算子集大小
         
-        # sample and use NamedSubset to contains dataset_name
+        print(f"Dataset len:{self.dataset_len}")
+        print("Final sampling info:")
+        table_data = [
+            [self.dataset_names[i], len(self.datasets[i]), dataset_sample_counts[i], f"{self.sample_weights[i]:.4f}"]
+            for i in range(len(dataset_sample_counts))
+        ]
+        print(tabulate(table_data, headers=["Dataset", "Total Length", "Samples", "Ratio"], tablefmt="grid"))
+        # sample and use NamedSubset to contain dataset_name
         selected_subsets = []
+        self.selected_indices = []
         episode_count = 0
-        for dataset, num_samples, dataset_name in zip(datasets, dataset_sample_counts, dataset_names):
+        for dataset, num_samples, dataset_name in zip(self.datasets, dataset_sample_counts, self.dataset_names):
             indices = list(range(len(dataset)))
-            sampled_indices = random.sample(indices, min(num_samples, len(dataset)))  # 采样
-            episode_this_dataset = int(dataset.num_episodes * (min(num_samples, len(dataset))/len(dataset)))
+            # 这个不允许重复采样
+            # sampled_indices = random.sample(indices, min(num_samples, len(dataset)))  # 采样
+            # episode_this_dataset = int(dataset.num_episodes * (min(num_samples, len(dataset))/len(dataset)))
+            # 允许重复采样，当num_samples>len(dataset)时
+            # 部分采样
+            # sampled_indices = random.choices(indices, k=num_samples)
+            # 全采样
+            sampled_indices = random.choices(indices, k=len(indices))
+            episode_this_dataset = int(dataset.num_episodes * (len(sampled_indices) / len(dataset)))
             episode_count += episode_this_dataset
-            selected_subsets.append(NamedSubset(dataset, sampled_indices, dataset_name))
+            self.selected_indices.append(sampled_indices)
+            # selected_subsets.append(NamedSubset(dataset, sampled_indices, dataset_name))
         
         self.num_episodes = episode_count
 
         # concat the selected dataset
-        self.dataset = ConcatDataset(selected_subsets)
+        # self.dataset = ConcatDataset(selected_subsets)
         
         # calculate stats
+        self.max_action_dim = cfg.policy.max_action_dim
+        self.max_state_dim = cfg.policy.max_state_dim
         all_new_obs_image_keys = ["observation.images.primary", 
                                   "observation.images.secondary", 
                                   "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
-        self.stats = aggregate_multi_stats(datasets, dataset_names) # Note: I modified this function
-        # print(f"Aggregated stats:{self.stats}")
+        self.stats = aggregate_multi_stats(self.datasets, self.dataset_names, self.max_action_dim) # Note: I modified this function
+        print(f"Aggregated stats:{self.stats}")
         # update meta_features
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")
         new_obs_image_keys = []
@@ -1447,15 +1464,39 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # finally create the meta class
         self.meta = LeRobotDatasetMetadata.create_with_stats_feats(stats=self.stats, features=meta_features) # Note: I added a class function
         self.meta.repo_id = "Prometheus"
+        self.dataset = None
+    
+    def pad_vector(self, vector, new_dim):
+        """Can be (batch_size x sequence_length x features_dimension)
+        or (batch_size x features_dimension)
+        """
+        if vector.shape[-1] == new_dim:
+            return vector
+        shape = list(vector.shape)
+        current_dim = shape[-1]
+        shape[-1] = new_dim
+        new_vector = torch.zeros(*shape, dtype=vector.dtype, device=vector.device)
+        new_vector[..., :current_dim] = vector
+        return new_vector
     
     def __len__(self):
-        return len(self.dataset)
+        # return len(self.dataset)
+        return self.dataset_len
 
     def __getitem__(self, index):
-        item = self.dataset[index]
-        # for key, value in item.items():
-        #     print(f"{key}: {value}")
-        dataset_name = item["dataset_name"]
+        # v2
+        selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
+        dataset_index = self.datasets.index(selected_dataset)
+        dataset_name = self.dataset_names[dataset_index]
+        indices = self.selected_indices[dataset_index] # the selected indices of this dataset
+        selected_id = random.choice(indices) # equal prob
+        item = selected_dataset[selected_id]
+        item['dataset_name'] = dataset_name
+        # v1
+        # item = self.dataset[index]
+        # # for key, value in item.items():
+        # #     print(f"{key}: {value}")
+        # dataset_name = item["dataset_name"]
         # unify the observation
         data_config = OXE_DATASET_CONFIGS[dataset_name]
         image_obs_keys = data_config["image_obs_keys"]
@@ -1482,11 +1523,15 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         else:
             item["source"] = f"{item['dataset_name']}_with_unknown_episode_id"
         # print(item.keys())
+        item["action"] = self.pad_vector(item["action"], self.max_action_dim)
+        # print(item["action"].shape)
+        item["observation.state"] = self.pad_vector(item["observation.state"], self.max_state_dim)
         return item
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
-        return len(self.dataset) if self.dataset is not None else self.meta.total_frames
+        # return len(self.dataset) if self.dataset is not None else self.meta.total_frames
+        return self.dataset_len if self.dataset_len is not None else self.meta.total_frames
 
     @property
     def features(self) -> dict[str, dict]:
@@ -1531,3 +1576,24 @@ def resolve_delta_timestamps(
         delta_timestamps = None
 
     return delta_timestamps
+
+@parser.wrap()
+def dataset_func_test(cfg: TrainPipelineConfig):
+    cfg.validate()
+    
+    image_transforms = (
+        ImageTransforms(cfg.dataset.image_transforms)
+    )
+    
+    dataset = MultiDatasetforDistTraining(
+        cfg=cfg,
+        image_transforms=image_transforms,
+        seed=cfg.seed,
+        data_mix="oxe_magic_soup_plus",
+        vla2root_json="vla2root_bak.json"
+    )
+    
+    print(dataset)
+    
+if __name__ == "__main__":
+    dataset_func_test()

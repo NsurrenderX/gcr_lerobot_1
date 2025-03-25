@@ -168,7 +168,22 @@ class Normalize(nn.Module):
                 std = buffer["std"]
                 assert not torch.isinf(mean).any(), _no_stats_error_str("mean")
                 assert not torch.isinf(std).any(), _no_stats_error_str("std")
-                batch[key] = (batch[key] - mean) / (std + 1e-8)
+                # batch[key] = (batch[key] - mean) / (std + 1e-8)
+                d_names = batch["dataset_name"]
+                for i in range(len(d_names)):
+                    d_name = d_names[i]
+                    if "agi" not in d_name:
+                        if "action" in key:
+                            start_dim = 7
+                            d_len = 22 - start_dim
+                        if "state" in key:
+                            start_dim = 8
+                            d_len = 20 - start_dim
+                        mean[start_dim:start_dim+d_len] = 0
+                        std[start_dim:start_dim+d_len] = 1
+                        batch[key][i] = (batch[key][i] - mean) / (std + 1e-8)
+                    else:
+                        batch[key][i] = (batch[key][i] - mean) / (std + 1e-8)
             elif norm_mode is NormalizationMode.MIN_MAX:
                 min = buffer["min"]
                 max = buffer["max"]

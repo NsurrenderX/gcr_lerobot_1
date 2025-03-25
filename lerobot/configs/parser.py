@@ -78,14 +78,14 @@ def filter_path_args(fields_to_filter: str | list[str], args: Sequence[str] | No
         fields_to_filter = [fields_to_filter]
 
     filtered_args = args
-    for field in fields_to_filter:
-        if get_path_arg(field, args):
-            if get_type_arg(field, args):
-                raise ArgumentError(
-                    argument=None,
-                    message=f"Cannot specify both --{field}.{PATH_KEY} and --{field}.{draccus.CHOICE_TYPE_KEY}",
-                )
-            filtered_args = [arg for arg in filtered_args if not arg.startswith(f"--{field}.")]
+    # for field in fields_to_filter:
+    #     if get_path_arg(field, args):
+    #         if get_type_arg(field, args):
+    #             raise ArgumentError(
+    #                 argument=None,
+    #                 message=f"Cannot specify both --{field}.{PATH_KEY} and --{field}.{draccus.CHOICE_TYPE_KEY}",
+    #             )
+    #         filtered_args = [arg for arg in filtered_args if not arg.startswith(f"--{field}.")]
 
     return filtered_args
 
