@@ -16,5 +16,10 @@
         "reduce_bucket_size": 2e8,
         "allgather_bucket_size": 5e8,
         "round_robin_gradients": true
+    },
+    "data_efficiency": {
+        "data_sampling": {
+            "num_workers": 8
+        }
     }
 }
