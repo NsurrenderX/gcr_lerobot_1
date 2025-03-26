@@ -1365,7 +1365,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             if dataset_name in vla2data_root.keys():
                 data_root = vla2data_root[dataset_name]
                 data_root = os.path.join(parent_dir, data_root)
-                repo_id = f"bulldog-{dataset_name}" # any
+                repo_id = f"Prometheus-{dataset_name}" # any
                 ds_meta = LeRobotDatasetMetadata(repo_id, root=data_root)
                 if meta_features == None:
                     meta_features = ds_meta.features
