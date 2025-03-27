@@ -1706,20 +1706,24 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         # time of each substep in dataloading
         if batch["time_dict"] is not None:
             for key in get_item_keys:
-                get_item_time_dict[key].append(batch["time_dict"][key])
+                # print(key, batch["time_dict"][key])
+                get_item_time_dict[key].append(torch.mean(batch["time_dict"][key]).numpy())
         if batch["fetch_item_time"] is not None:
             for key in single_item_keys:
-                single_item_time_dict[key].append(batch["fetch_item_time"][key])
+                # print(key, batch["fetch_item_time"][key])
+                single_item_time_dict[key].append(torch.mean(batch["fetch_item_time"][key]).numpy())
         
         start_time = time.perf_counter()
-        if batch_idx >= 2000:
+        if batch_idx > 1000:
             break
     
     print(f"Average dataloading time:{dataloadin_s/step}, max_s:{max_s}, min_s:{min_s}")
     for key in get_item_keys:
-        print(f"{key} - Average time:{np.mean(get_item_time_dict[key])} - Max time:{np.max(get_item_time_dict[key])} - Min time:{np.min(get_item_time_dict[key])}")
+        data = np.asanyarray(get_item_time_dict[key])
+        print(f"{key} -Shape: {data.shape}- Average time:{np.mean(data)} - Max time:{np.max(data)} - Min time:{np.min(data)}")
     for key in single_item_keys:
-        print(f"{key} - Average time:{np.mean(single_item_time_dict[key])} - Max time:{np.max(single_item_time_dict[key])} - Min time:{np.min(single_item_time_dict[key])}")
+        data = np.asanyarray(single_item_time_dict[key])
+        print(f"{key} - Shape: {data.shape} - Average time:{np.mean(data)} - Max time:{np.max(data)} - Min time:{np.min(data)}")
     print(f"Batch keys:{batch_cache.keys()}")
     
 class model4test(torch.nn.Module):
