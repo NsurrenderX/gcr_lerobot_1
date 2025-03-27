@@ -18,11 +18,15 @@ import logging
 import random
 import json
 import os
+import time
 import shutil
 import polars as pl
 from pathlib import Path
 from typing import Callable
 from datetime import datetime
+from tqdm import tqdm
+
+import deepspeed
 
 import datasets
 import numpy as np
@@ -1445,9 +1449,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         img_feats = {}
         # first remove keys contaning images
         old_keys = list(meta_features.keys())
-        print("\n\n")
+        # print("\n\n")
         for key in old_keys:
-            print(key, meta_features[key])
+            # print(key, meta_features[key])
             if meta_features[key]["dtype"] in ["image", "video"]:
                 img_feats = meta_features[key]
                 del meta_features[key]
@@ -1460,7 +1464,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # then use the new image keys
         for new_key in new_obs_image_keys:
             meta_features[new_key] = img_feats
-        print(f"Unified input features:{meta_features}")
+        # print(f"Unified input features:{meta_features}")
         # finally create the meta class
         self.meta = LeRobotDatasetMetadata.create_with_stats_feats(stats=self.stats, features=meta_features) # Note: I added a class function
         self.meta.repo_id = "Prometheus"
@@ -1580,6 +1584,7 @@ def resolve_delta_timestamps(
 @parser.wrap()
 def dataset_func_test(cfg: TrainPipelineConfig):
     cfg.validate()
+    deepspeed.init_distributed()
     
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms)
@@ -1590,10 +1595,51 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=cfg.seed,
         data_mix="oxe_magic_soup_plus",
-        vla2root_json="vla2root_bak.json"
+        vla2root_json="vla2root.json" # choose vla2root_bak.json for loacal dataloading
+    )
+    model = model4test()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    
+    modelengine, optimizer, dataloader, _ = deepspeed.initialize(
+        model=model,
+        training_data=dataset,
+        optimizer=optimizer,
+        model_parameters=model.parameters(),
+        config=cfg.deepspeed,
     )
     
-    print(dataset)
+    dataloadin_s = 0.0
+    step = 0
+    max_s = 0.0
+    min_s = 100.0
+    
+    start_time = time.perf_counter()
+    batch_cache = None
+    
+    for batch_idx, batch in tqdm(enumerate(dataloader), total=cfg.steps):
+        dataloading_time = time.perf_counter() - start_time
+        start_time = time.perf_counter()
+        step += 1
+        dataloadin_s += dataloading_time
+        if dataloading_time > max_s:
+            max_s = dataloading_time
+        if dataloading_time < min_s:
+            min_s = dataloading_time
+        batch_cache = batch
+        if batch_idx >= 2000:
+            break
+    
+    print(f"Average dataloading time:{dataloadin_s/step}, max_s:{max_s}, min_s:{min_s}")
+    print(f"Batch keys:{batch_cache.keys()}")
+    
+class model4test(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = torch.nn.Linear(10, 10)
+    def forward(self, x):
+        return self.fc(x)
+    
+    
     
 if __name__ == "__main__":
     dataset_func_test()
