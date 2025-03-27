@@ -19,7 +19,7 @@
     },
     "data_efficiency": {
         "data_sampling": {
-            "num_workers": 8
+            "num_workers": 16
         }
     }
 }

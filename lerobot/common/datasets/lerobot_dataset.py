@@ -815,6 +815,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return self.num_frames
 
     def __getitem__(self, idx) -> dict:
+        performance_check = True
+        
+        start_time = time.perf_counter()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
 
@@ -825,21 +828,45 @@ class LeRobotDataset(torch.utils.data.Dataset):
             item = {**item, **padding}
             for key, val in query_result.items():
                 item[key] = val
+        
+        query_indice_dataset_time = time.perf_counter()
 
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
+            
+        query_video_time = time.perf_counter()
 
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
             for cam in image_keys:
                 item[cam] = self.image_transforms(item[cam])
+        
+        image_transform_time = time.perf_counter()
 
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks[task_idx]
+        
+        add_task_time = time.perf_counter()
+        
+        if performance_check:
+            time_dict = {
+                "query_indice_dataset_time": query_indice_dataset_time - start_time,
+                "query_video_time": query_video_time - query_indice_dataset_time,
+                "image_transform_time": image_transform_time - query_video_time,
+                "add_task_time": add_task_time - image_transform_time
+            }
+        else:
+            time_dict = {
+                "query_indice_dataset_time": 0,
+                "query_video_time": 0,
+                "image_transform_time": 0,
+                "add_task_time": 0
+            }
+        item["fetch_item_time"] = time_dict
 
         return item
 
@@ -1489,13 +1516,23 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # v2
+        performance_check = True
+        
+        start_time = time.perf_counter()
+        
         selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
         dataset_index = self.datasets.index(selected_dataset)
         dataset_name = self.dataset_names[dataset_index]
         indices = self.selected_indices[dataset_index] # the selected indices of this dataset
         selected_id = random.choice(indices) # equal prob
+        
+        choose_index_time = time.perf_counter()
+        
         item = selected_dataset[selected_id]
         item['dataset_name'] = dataset_name
+        
+        get_item_from_single_dataset_time = time.perf_counter()
+        
         # v1
         # item = self.dataset[index]
         # # for key, value in item.items():
@@ -1514,22 +1551,54 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             else:
                 # if missing, use zero
                 item[f"observation.images.{new_key}"] = torch.zeros_like(exist_image)
+                
+        unify_observation_time = time.perf_counter()
+        
         # remove other image keys
         keys = list(item.keys())
         # print(keys, self.new_obs_image_keys)
         for key in keys:
             if "images" in key and key not in self.new_obs_image_keys:
                 del item[key]
+                
+        remove_other_image_keys_time = time.perf_counter()
+        
         if "episode_index" in item:
             item["source"] = f"{item['dataset_name']}_episode_id_{item['episode_index']}"
         elif "ep_idx" in item:
             item["source"] = f"{item['dataset_name']}_episode_id_{item['ep_idx']}"
         else:
             item["source"] = f"{item['dataset_name']}_with_unknown_episode_id"
+            
+        add_source_time = time.perf_counter()
+        
         # print(item.keys())
         item["action"] = self.pad_vector(item["action"], self.max_action_dim)
         # print(item["action"].shape)
         item["observation.state"] = self.pad_vector(item["observation.state"], self.max_state_dim)
+        
+        padding_time = time.perf_counter()
+        
+        if performance_check:
+            time_dict = {
+                "choose_index_time": choose_index_time - start_time,
+                "get_item_from_single_dataset_time": get_item_from_single_dataset_time - choose_index_time,
+                "unify_observation_time": unify_observation_time - get_item_from_single_dataset_time,
+                "remove_other_image_keys_time": remove_other_image_keys_time - unify_observation_time,
+                "add_source_time": add_source_time - remove_other_image_keys_time,
+                "padding_time": padding_time - add_source_time
+            }
+        else:
+            time_dict = {
+                "choose_index_time": None,
+                "get_item_from_single_dataset_time": None,
+                "unify_observation_time": None,
+                "remove_other_image_keys_time": None,
+                "add_source_time": None,
+                "padding_time": None
+            }
+        item["time_dict"] = time_dict
+        
         return item
     @property
     def num_frames(self) -> int:
@@ -1595,7 +1664,7 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=cfg.seed,
         data_mix="oxe_magic_soup_plus",
-        vla2root_json="vla2root.json" # choose vla2root_bak.json for loacal dataloading
+        vla2root_json="vla2root.json" # default to vla2root.json choose vla2root_bak.json for loacal dataloading
     )
     model = model4test()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -1613,12 +1682,20 @@ def dataset_func_test(cfg: TrainPipelineConfig):
     max_s = 0.0
     min_s = 100.0
     
-    start_time = time.perf_counter()
+    
     batch_cache = None
+    
+    get_item_keys = ["choose_index_time", "get_item_from_single_dataset_time", "unify_observation_time", "remove_other_image_keys_time", "add_source_time", "padding_time"]
+    single_item_keys = ["query_indice_dataset_time", "query_video_time", "image_transform_time", "add_task_time"]
+    
+    single_item_time_dict = {key: [] for key in single_item_keys}
+    get_item_time_dict = {key: [] for key in get_item_keys}
+    
+    start_time = time.perf_counter()
     
     for batch_idx, batch in tqdm(enumerate(dataloader), total=cfg.steps):
         dataloading_time = time.perf_counter() - start_time
-        start_time = time.perf_counter()
+        
         step += 1
         dataloadin_s += dataloading_time
         if dataloading_time > max_s:
@@ -1626,10 +1703,23 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         if dataloading_time < min_s:
             min_s = dataloading_time
         batch_cache = batch
+        # time of each substep in dataloading
+        if batch["time_dict"] is not None:
+            for key in get_item_keys:
+                get_item_time_dict[key].append(batch["time_dict"][key])
+        if batch["fetch_item_time"] is not None:
+            for key in single_item_keys:
+                single_item_time_dict[key].append(batch["fetch_item_time"][key])
+        
+        start_time = time.perf_counter()
         if batch_idx >= 2000:
             break
     
     print(f"Average dataloading time:{dataloadin_s/step}, max_s:{max_s}, min_s:{min_s}")
+    for key in get_item_keys:
+        print(f"{key} - Average time:{np.mean(get_item_time_dict[key])} - Max time:{np.max(get_item_time_dict[key])} - Min time:{np.min(get_item_time_dict[key])}")
+    for key in single_item_keys:
+        print(f"{key} - Average time:{np.mean(single_item_time_dict[key])} - Max time:{np.max(single_item_time_dict[key])} - Min time:{np.min(single_item_time_dict[key])}")
     print(f"Batch keys:{batch_cache.keys()}")
     
 class model4test(torch.nn.Module):
