@@ -5,11 +5,11 @@
     "fp16": {
         "enabled": false
     },
-    "train_micro_batch_size_per_gpu": 4,
+    "train_micro_batch_size_per_gpu": 2,
     "gradient_accumulation_steps": 4,
     "gradient_clipping": 1.0,
     "zero_optimization": {
-        "stage": 1,
+        "stage": 2,
         "overlap_comm": true,
         "contiguous_gradients": true,
         "reduce_scatter": true,

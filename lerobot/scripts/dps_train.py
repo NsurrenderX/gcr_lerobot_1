@@ -25,6 +25,8 @@ from typing import Any
 import deepspeed
 from deepspeed import get_accelerator
 
+from tqdm import tqdm
+
 import torch
 from termcolor import colored
 from torch import distributed as dist
@@ -89,7 +91,7 @@ def update_policy(
 ) -> tuple[MetricsTracker, dict]:
     
     batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
     loss, output_dict = model_engine(batch)
 
     model_engine.backward(loss)
@@ -216,7 +218,7 @@ def train(cfg: TrainPipelineConfig):
             'step': step
         }
         
-    dl_iter = cycle(dataloader)
+    # dl_iter = cycle(dataloader)
 
     # Metrics setup
     train_metrics = {
@@ -243,11 +245,10 @@ def train(cfg: TrainPipelineConfig):
     fwd_bwd_time = 0
     dataloading_s = 0
     
-    for _ in range(completed_steps, total_steps):
-        
-        
-        start_time = time.perf_counter()
-        batch = next(dl_iter)
+    start_time = time.perf_counter()
+    
+    for batch_idx, batch in tqdm(enumerate(dataloader), total=cfg.steps - completed_steps):
+        # batch = next(dl_iter)
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
         
@@ -303,7 +304,7 @@ def train(cfg: TrainPipelineConfig):
                 train_tracker.reset_averages()
 
             if cfg.env and is_eval_step:
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
                 step_id = get_step_identifier(step, cfg.steps)
                 logger.info(f"Eval policy at step {step}")
                 with torch.no_grad():
@@ -336,7 +337,9 @@ def train(cfg: TrainPipelineConfig):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
+        
         dist.barrier()
+        start_time = time.perf_counter()
     # Cleanup
     if int(os.environ.get('RANK', 0)) == 0 and eval_env:
         eval_env.close()
